@@ -10,6 +10,8 @@
 ![scikit-learn](https://img.shields.io/badge/scikit--learn-DBSCAN-a07cff?style=for-the-badge&logo=scikitlearn&logoColor=white&labelColor=0b0b16)
 ![Recall](https://img.shields.io/badge/Recall-100%25-ff3d81?style=for-the-badge&labelColor=0b0b16)
 ![F1](https://img.shields.io/badge/F1-0.92-53f5a6?style=for-the-badge&labelColor=0b0b16)
+![Flask](https://img.shields.io/badge/Flask-REST_API-ecebf5?style=for-the-badge&logo=flask&logoColor=white&labelColor=0b0b16)
+![SQLite](https://img.shields.io/badge/SQLite-database-6ef3ff?style=for-the-badge&logo=sqlite&logoColor=white&labelColor=0b0b16)
 
 *Pattern Recognition & Anomaly Detection — Topic 08: Player Behavior Anomalies*
 
@@ -22,6 +24,21 @@
 > Use **DBSCAN** to cluster in-game movement coordinate data and isolate potential **automated aiming or cheating behavior** in multiplayer games.
 
 Cheats such as aimbots, speedhacks and triggerbots leave behavioural traces that differ from how real humans move and aim. Sentinel AI learns what *normal* play looks like — **without ever being told who cheats** — and flags players whose behaviour falls outside dense regions of normal activity.
+
+---
+
+## ✨ What's Inside
+
+| Feature | What it does |
+|---|---|
+| ☠️ **Beat Sentinel** | Red-team game: **design your own cheat** (aim lock, smoothing, auto-trigger, speed boost). It is dropped into **20 simulated matches**, run through the full pipeline and DBSCAN, and either **CAUGHT** or **UNDETECTED** — with a replay, a detection rate and a **Hall of Fame / Wall of Shame** leaderboard stored in the database |
+| 🎬 **Match Replay Theatre** | Watch any of the 20 matches play back with all 10 players — play/pause, 1×/2×/4× speed, timeline scrubbing; flagged players glow |
+| 🔴 **Live Scanner** | Enter a gamertag, match ID and gameplay stats — or upload raw match telemetry — and the backend returns a verdict (Clean / Review / High / Critical) with the reasons |
+| 🗄️ **Scan database** | Every scan is stored in **SQLite** and shown in a live history table |
+| 🧪 **Parameter Lab** | Move ε and min_samples and watch DBSCAN re-cluster — **210 precomputed runs** (sensitivity analysis) |
+| ⚖️ **Benchmark** | DBSCAN vs Isolation Forest, LOF, One-Class SVM and K-Means — tested fairly with wrong guesses of the cheat rate |
+| 🕵️ **Player dossiers** | Radar chart of feature deviations and a replay of each suspect's movement |
+| 🗺️ **Live arena** | Animated map of all 200 players; flagged players glow |
 
 ---
 
@@ -158,6 +175,65 @@ Each flagged player is also given a **top reason**: the feature with the largest
 - **4 false positives:** skilled humans sitting just outside the normal boundary.
 - The **score gap** between the highest false positive (1.44) and the lowest cheater (1.98) shows the score is a meaningful risk measure, not just a yes/no flag.
 
+### 🧪 Sensitivity analysis (Parameter Lab)
+
+DBSCAN was re-run **210 times** over ε ∈ [0.6, 4.0] × min_samples ∈ {3, 4, 5, 6, 8, 10}.
+- ε too small → almost everyone is “noise” (F1 ≈ 0.2).
+- ε too large → cheaters are absorbed into the normal cluster and missed.
+- The label-free **knee** choice (ε = 1.83) gives F1 = 0.92. A slightly larger ε reaches 1.00, but choosing ε *using the labels* would be **data leakage**, so the knee is the honest choice.
+
+<p align="center"><img src="docs/figures/eps_sensitivity.png" width="70%"/></p>
+
+### ⚖️ Benchmark vs other detectors
+
+Every other method needs its **contamination** (the expected cheat rate) set in advance — a number nobody knows in real life. Each was therefore tested with a low (5%), near-correct (12%) and high (20%) guess:
+
+| Method | Needs cheat rate? | F1 @5% | F1 @12% | F1 @20% | Worst case |
+|---|---|---|---|---|---|
+| **DBSCAN** | **No** | **0.92** | **0.92** | **0.92** | **0.92** |
+| Isolation Forest | Yes | 0.61 | 0.94 | 0.73 | 0.61 |
+| Local Outlier Factor | Yes | 0.61 | 0.98 | 0.73 | 0.61 |
+| One-Class SVM | Yes | 0.34 | 0.56 | 0.67 | 0.34 |
+| K-Means distance | Yes | 0.48 | 0.60 | 0.54 | 0.48 |
+
+> Given the *exact* rate, LOF and Isolation Forest score slightly higher — but when the guess is wrong they drop to 0.61. **DBSCAN has the best average and best worst-case F1**, because it finds the outliers itself.
+
+<p align="center"><img src="docs/figures/benchmark.png" width="75%"/></p>
+
+---
+
+## 🔴 Live Scanner — Backend & Database
+
+```
+ Website  ──fetch/JSON──►  Flask REST API  ──SQL──►  SQLite (backend/sentinel.db)
+                              │
+                              └── DBSCAN model trained on data/processed/player_features.csv
+```
+
+A new player is scored exactly like the reference players: standardise the 10 features, find the nearest **core point of the normal cluster**, divide the distance by ε. The scan and its verdict are saved to the `scans` table.
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| GET | `/api/health` | Server status, number of saved scans |
+| GET | `/api/model` | ε, min_samples, feature ranges, demo presets |
+| POST | `/api/scan` | Score a player from 10 feature values → saved |
+| POST | `/api/scan/upload` | Upload raw telemetry `.csv` → same feature extraction as the pipeline → saved |
+| GET | `/api/scans` | Scan history |
+| POST | `/api/challenge` | Beat Sentinel: simulate 20 matches with a user-designed cheat → detection rate, advantage, replay → saved |
+| GET | `/api/leaderboard` | Hall of Fame (undetected cheats) and Wall of Shame (caught) |
+| GET | `/api/stats` | Counts per verdict |
+| DELETE | `/api/scans` | Clear history |
+
+### ☠️ Beat Sentinel — what it shows
+
+| Cheat loadout | Detection rate | Advantage |
+|---|---|---|
+| Honest (no cheat) | 0% | — |
+| Rage aimbot | 100% | +118% |
+| Closet cheater (weak aim + smoothing) | ~20% | ~+14% |
+
+**Insight:** Sentinel catches every cheat strong enough to matter. The only cheats that slip through give a tiny advantage — DBSCAN forces cheaters to play almost like humans.
+
 ---
 
 ## 🏁 Conclusion
@@ -184,18 +260,23 @@ Density-based clustering can separate honest play from cheating **without any la
 sentinel-ai-player-anomaly-detection/
 ├── backend/
 │   ├── generate_data.py      # synthetic telemetry generator
-│   ├── pipeline.py           # preprocessing → features → DBSCAN → scoring → evaluation
+│   ├── pipeline.py           # preprocessing → features → DBSCAN → scoring → evaluation → benchmark
+│   ├── app.py                # Flask REST API + SQLite database + serves the website
+│   ├── sentinel.db           # created automatically: every scan is stored here
 │   └── requirements.txt
 ├── data/
 │   ├── raw/                  # player_telemetry.csv (60,000 rows)
 │   └── processed/            # player_features.csv (200 players × features + scores)
 ├── docs/
-│   └── figures/              # k_distance.png, pca_clusters.png, score_hist.png
+│   └── figures/              # k_distance, pca_clusters, score_hist, eps_sensitivity, benchmark
 └── frontend/                 # interactive website (HTML / CSS / JS, no frameworks)
     ├── index.html
     ├── styles.css
     ├── app.js
-    └── public/data/results.json
+    ├── config.js             # where the site finds the backend
+    └── public/
+        ├── data/results.json
+        └── samples/          # sample telemetry files for the upload scanner
 ```
 
 ---
@@ -212,17 +293,16 @@ python backend/generate_data.py
 # 3. Run the full pipeline (writes CSVs, plots and website data)
 python backend/pipeline.py
 
-# 4. View the website locally
-cd frontend
-python -m http.server 8000
-# open http://localhost:8000
+# 4. Start the backend (API + database + website)
+python backend/app.py
+# open http://localhost:5000
 ```
 
 ---
 
 ## 🛠️ Tech Stack
 
-**Python** · **pandas** · **NumPy** · **scikit-learn** (DBSCAN, StandardScaler, PCA, NearestNeighbors) · **Matplotlib** · **HTML / CSS / JavaScript** (hand-built SVG & Canvas visualisations) · **Vercel**
+**Python** · **pandas** · **NumPy** · **scikit-learn** (DBSCAN, StandardScaler, PCA, NearestNeighbors, IsolationForest, LOF, One-Class SVM, K-Means) · **Matplotlib** · **Flask** (REST API) · **SQLite** · **HTML / CSS / JavaScript** (hand-built SVG & Canvas visualisations) · **Vercel**
 
 ---
 

@@ -349,6 +349,11 @@
     renderSuspects(ctx);
     renderEval(ctx);
     renderConclusion(ctx);
+    renderScanner(ctx);
+    renderChallenge(ctx);
+    renderTheatre(ctx);
+    renderLab(ctx);
+    renderBench(ctx);
     startArena(ctx);
     navBehaviour();
 
@@ -646,10 +651,578 @@
       Every real cheater scored <b>≥ ${minCheat.toFixed(2)}</b>. That gap justifies a three-tier policy: <b style="color:${C.amber}">review</b> (1.0–1.8) goes to a human moderator, while <b style="color:${C.violet}">high</b> and <b style="color:${C.pink}">critical</b> (≥ 1.8) are near-certain cheats.</p></div>`;
   }
 
+  /* =========================================================
+     LIVE SCANNER  (talks to the Flask backend + SQLite)
+     ========================================================= */
+  const API = (window.SENTINEL_API || "").replace(/\/$/, "");
+  const TIER_META = {
+    clean:    { label: "CLEAN",          color: C.green,  text: "Behaviour sits inside the dense core of honest players. No action needed." },
+    review:   { label: "UNDER REVIEW",   color: C.amber,  text: "Just outside normal behaviour — could be a very skilled player. Sent to a human moderator." },
+    high:     { label: "HIGH RISK",      color: C.violet, text: "Far outside every dense region of honest play — very likely assisted." },
+    critical: { label: "CHEAT DETECTED", color: C.pink,   text: "Extreme deviation from every honest player — near-certain cheat." },
+  };
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  async function api(path, opts) {
+    const r = await fetch(API + path, opts);
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || `Server error ${r.status}`);
+    return j;
+  }
+  let backendOnline = false;
+  const fv = (x) => (Math.abs(x) >= 10 ? (+x).toFixed(1) : (+x).toFixed(3));
+
+  function renderScanner({ D, players, F }) {
+    const status = $("#api-status"), form = $("#scan-form"), btn = $("#scan-btn"), out = $("#scan-result");
+    const tagIn = $("#f-tag"), matchIn = $("#f-match"), err = $("#form-error");
+    let mode = "stats", file = null;
+
+    // ---- slider ranges & presets from the reference population (same data the backend trains on)
+    const med = (arr) => { const s = [...arr].sort((a, b) => a - b); const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+    const RANGE = {}, DEF = {};
+    F.forEach((f) => {
+      const v = players.map((p) => p[f]); const lo = Math.min(...v), hi = Math.max(...v), pad = (hi - lo) * 0.15;
+      RANGE[f] = ["hit_rate", "headshot_rate", "path_straightness"].includes(f) ? [0, 1] : [Math.max(0, lo - pad), hi + pad];
+      DEF[f] = med(v);
+    });
+    const groupMed = (fn) => { const g = players.filter(fn); const o = {}; F.forEach((f) => (o[f] = med(g.map((p) => p[f])))); return g.length ? o : null; };
+    const humans = players.filter((p) => p.true_label === "human");
+    const pros = [...humans].filter((p) => !p.is_anomaly).sort((a, b) => b.hit_rate - a.hit_rate).slice(0, 15);
+    const PRESETS = [
+      ["Casual player", C.cyan, groupMed((p) => p.true_label === "human")],
+      ["Pro player", C.green, pros.length ? groupMed((p) => pros.includes(p)) : null],
+      ["Aimbot", C.pink, groupMed((p) => p.true_label === "aimbot")],
+      ["Speedhack", C.amber, groupMed((p) => p.true_label === "speedhack")],
+      ["Triggerbot", C.violet, groupMed((p) => p.true_label === "triggerbot")],
+    ].filter((x) => x[2]);
+
+    // ---- sliders
+    const box = $("#sliders");
+    const decimals = (f) => (RANGE[f][1] - RANGE[f][0] > 20 ? 1 : 3);
+    F.forEach((f) => {
+      const [lo, hi] = RANGE[f];
+      const row = el("div", "sl");
+      row.innerHTML = `<div class="sl-top"><span>${FEAT_INFO[f][0]} <small>${f}</small></span><input type="number" step="any" data-f="${f}" aria-label="${FEAT_INFO[f][0]} value"></div>
+        <input type="range" min="${lo}" max="${hi}" step="${(hi - lo) / 400}" data-f="${f}" aria-label="${FEAT_INFO[f][0]}">`;
+      box.append(row);
+    });
+    const setVal = (f, v) => {
+      const r = $(`input[type=range][data-f="${f}"]`, box), n = $(`input[type=number][data-f="${f}"]`, box);
+      const [lo, hi] = RANGE[f];
+      r.value = Math.min(hi, Math.max(lo, v));
+      n.value = (+v).toFixed(decimals(f));
+      r.style.setProperty("--p", `${((r.value - lo) / (hi - lo)) * 100}%`);
+      const z = (v - ctxStats[f].m) / ctxStats[f].s;
+      r.closest(".sl").classList.toggle("hot", Math.abs(z) > 2);
+    };
+    const ctxStats = {};
+    F.forEach((f) => { const v = players.map((p) => p[f]); const m = v.reduce((a, b) => a + b, 0) / v.length; ctxStats[f] = { m, s: Math.sqrt(v.reduce((a, b) => a + (b - m) ** 2, 0) / v.length) || 1 }; });
+    const getVals = () => { const o = {}; F.forEach((f) => (o[f] = parseFloat($(`input[type=number][data-f="${f}"]`, box).value))); return o; };
+    box.addEventListener("input", (e) => {
+      const f = e.target.dataset.f; if (!f) return;
+      $$("#presets .chip").forEach((c) => c.classList.remove("active"));
+      if (e.target.type === "range") setVal(f, +e.target.value);
+      else { const v = parseFloat(e.target.value); if (Number.isFinite(v)) { const r = $(`input[type=range][data-f="${f}"]`, box); r.value = v; r.style.setProperty("--p", `${((Math.min(RANGE[f][1], Math.max(RANGE[f][0], v)) - RANGE[f][0]) / (RANGE[f][1] - RANGE[f][0])) * 100}%`); } }
+    });
+    F.forEach((f) => setVal(f, DEF[f]));
+
+    // ---- presets
+    const pbox = $("#presets");
+    PRESETS.forEach(([name, color, vals]) => {
+      const b = el("button", "chip", `<i style="background:${color};box-shadow:0 0 8px ${color}"></i>${name}`);
+      b.type = "button"; b.style.color = color;
+      b.addEventListener("click", () => {
+        F.forEach((f) => setVal(f, vals[f]));
+        $$(".chip", pbox).forEach((c) => c.classList.toggle("active", c === b));
+        if (!tagIn.value.trim()) tagIn.value = { "Casual player": "Casual_Carl", "Pro player": "ProAim_Priya", Aimbot: "xX_H3adsh0t_Xx", Speedhack: "ZoomZoom99", Triggerbot: "InstaReact" }[name] || name;
+      });
+      pbox.append(b);
+    });
+
+    // ---- tabs + upload
+    $$(".tabs button").forEach((b) => b.addEventListener("click", () => {
+      mode = b.dataset.tab;
+      $$(".tabs button").forEach((x) => x.classList.toggle("active", x === b));
+      $("#pane-stats").hidden = mode !== "stats"; $("#pane-upload").hidden = mode !== "upload";
+    }));
+    const fi = $("#f-file"), drop = $("#drop");
+    fi.addEventListener("change", () => {
+      file = fi.files[0] || null;
+      $("#drop-text").textContent = file ? `✓ ${file.name}` : "Drop a telemetry .csv here or click to browse";
+      drop.classList.toggle("has", !!file);
+    });
+    ["dragenter", "dragover"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add("over"); }));
+    ["dragleave", "drop"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove("over"); }));
+    drop.addEventListener("drop", (e) => { if (e.dataTransfer.files[0]) { fi.files = e.dataTransfer.files; fi.dispatchEvent(new Event("change")); } });
+
+    // ---- backend status
+    const setStatus = (ok, html) => { status.className = `api-status ${ok ? "ok" : "off"}`; $("span", status).innerHTML = html; btn.disabled = !ok; };
+    const check = () => api("/api/health").then((h) => {
+      backendOnline = true;
+      setStatus(true, `Backend online · Flask + DBSCAN · <b>${h.scans_saved}</b> scan${h.scans_saved === 1 ? "" : "s"} in database`);
+      loadHistory();
+    }).catch(() => {
+      backendOnline = false;
+      setStatus(false, `Backend offline — run <code>python backend/app.py</code> and open <code>localhost:5000</code>`);
+    });
+    check();
+
+    // ---- submit
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      err.textContent = ""; tagIn.classList.remove("invalid");
+      const tag = tagIn.value.trim(), match = matchIn.value.trim();
+      if (!/^[A-Za-z0-9_.\- ]{2,24}$/.test(tag)) { tagIn.classList.add("invalid"); err.textContent = "Enter a gamertag (2–24 characters: letters, numbers, space, _ . -)."; tagIn.focus(); return; }
+      let req;
+      if (mode === "upload") {
+        if (!file) { err.textContent = "Choose a telemetry .csv file first — or download a sample below."; return; }
+        const fd = new FormData(); fd.append("gamertag", tag); fd.append("match_id", match); fd.append("file", file);
+        req = api("/api/scan/upload", { method: "POST", body: fd });
+      } else {
+        const vals = getVals();
+        const bad = F.find((f) => !Number.isFinite(vals[f]) || vals[f] < 0);
+        if (bad) { err.textContent = `“${FEAT_INFO[bad][0]}” needs a positive number.`; return; }
+        req = api("/api/scan", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ gamertag: tag, match_id: match, features: vals }) });
+      }
+      btn.disabled = true; $(".scan-btn-txt", btn).textContent = "Scanning…";
+      showScanning(D);
+      try {
+        const [res] = await Promise.all([req, new Promise((r) => setTimeout(r, REDUCED ? 0 : 2100))]);
+        showResult(res, D, players);
+        loadHistory(res.id);
+        api("/api/health").then((h) => setStatus(true, `Backend online · Flask + DBSCAN · <b>${h.scans_saved}</b> scan${h.scans_saved === 1 ? "" : "s"} in database`)).catch(() => {});
+      } catch (ex) {
+        out.innerHTML = `<div class="sr-idle"><div class="radar"><i></i><i></i><i></i><b></b></div><h3>Scan failed</h3><p class="muted">${esc(ex.message)}</p></div>`;
+        if (!backendOnline) check();
+      } finally {
+        btn.disabled = !backendOnline; $(".scan-btn-txt", btn).textContent = "Run Sentinel scan";
+      }
+    });
+
+    function showScanning(D) {
+      const lines = [
+        `POST ${mode === "upload" ? "/api/scan/upload" : "/api/scan"}`,
+        mode === "upload" ? "parsing telemetry · extracting 10 features" : "validating 10 behavioural features",
+        "standardising with population μ / σ",
+        `searching normal core points · ε = ${D.model.eps.toFixed(3)}`,
+        "computing anomaly score = distance ÷ ε",
+        "INSERT INTO scans → sentinel.db",
+      ];
+      out.innerHTML = `<div class="sr-scanning"><div class="radar"><i></i><i></i><i></i><b></b></div><div class="term">${lines.map((l, i) => `<div style="animation-delay:${i * 0.32}s" class="${i < lines.length ? "ok" : ""}">${l}</div>`).join("")}</div></div>`;
+    }
+
+    function showResult(r, D, players) {
+      const meta = TIER_META[r.tier] || TIER_META.review;
+      const col = meta.color, R = 44, L = 2 * Math.PI * R;
+      const frac = Math.min(r.score / 6, 1);
+      const clean = r.tier === "clean";
+      out.innerHTML = `<div class="sr-done">
+        <div class="sr-top">
+          <div><span class="mono muted small">SCAN #${r.id} · SAVED TO DATABASE</span>
+            <div class="verdict-label" style="color:${col};text-shadow:0 0 30px ${col}66">${meta.label}</div>
+            <h3>${esc(r.gamertag)}</h3>
+            <div class="sr-meta">${r.match_id ? esc(r.match_id) + " · " : ""}${esc(r.source)}</div></div>
+          <div class="score-ring"><svg viewBox="0 0 104 104"><circle cx="52" cy="52" r="${R}" fill="none" stroke="rgba(255,255,255,.07)" stroke-width="7"/>
+            <circle class="ring-arc" cx="52" cy="52" r="${R}" fill="none" stroke="${col}" stroke-width="7" stroke-linecap="round" stroke-dasharray="${L}" stroke-dashoffset="${L}" style="filter:drop-shadow(0 0 6px ${col})"/></svg>
+            <div class="ring-txt"><b style="color:${col}">${r.score.toFixed(2)}</b><span>SCORE</span></div></div>
+        </div>
+        <p class="sr-text">${meta.text} ${clean ? `Score ${r.score.toFixed(2)} ≤ 1.0 means this player is within ε of an honest core player.` : `Score ${r.score.toFixed(2)} means the nearest honest core player is <b>${r.score.toFixed(1)}×</b> further away than DBSCAN's ε.`}</p>
+        <div><div class="mini-title">${clean ? "Largest deviations · all within normal play" : "Why Sentinel flagged this player"}</div>
+          ${r.reasons.map((x) => { const zc = Math.abs(x.z) > 2 ? col : C.cyan; return `<div class="reason"><b>${x.label}</b><span class="rz" style="color:${zc}">${x.z >= 0 ? "+" : ""}${x.z.toFixed(1)}σ</span>
+            <div class="rbar"><div data-w="${Math.min(Math.abs(x.z) / 6, 1) * 100}%" style="background:${zc};box-shadow:0 0 8px ${zc}"></div></div>
+            <p>${clean ? "" : "This player " + esc(x.text) + " · "}value <b>${fv(x.value)}</b> vs normal ${fv(x.normal)}</p></div>`; }).join("")}
+        </div>
+        <div><div class="mini-title">Position among ${players.length} reference players</div><div class="sr-map" id="sr-map"></div></div>
+      </div>`;
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        const a = $(".ring-arc", out); if (a) a.style.strokeDashoffset = L * (1 - frac);
+        $$(".rbar div", out).forEach((b) => (b.style.width = b.dataset.w));
+      }));
+      drawMiniMap($("#sr-map"), players, r, col);
+    }
+
+    function drawMiniMap(host, players, r, col) {
+      host.innerHTML = "";
+      const W = host.clientWidth, H = host.clientHeight, pad = 18;
+      const xs0 = players.map((p) => p.pca_x).concat(r.pca[0]), ys0 = players.map((p) => p.pca_y).concat(r.pca[1]);
+      const [x0, x1] = [Math.min(...xs0), Math.max(...xs0)], [y0, y1] = [Math.min(...ys0), Math.max(...ys0)];
+      const X = (v) => pad + ((v - x0) / (x1 - x0 || 1)) * (W - pad * 2), Y = (v) => H - pad - ((v - y0) / (y1 - y0 || 1)) * (H - pad * 2);
+      const svg = S("svg", { width: W, height: H, class: "chart" }, host);
+      players.forEach((p) => S("circle", { cx: X(p.pca_x), cy: Y(p.pca_y), r: p.is_anomaly ? 2.6 : 2, fill: p.is_anomaly ? C.pink : C.cyan, opacity: p.is_anomaly ? 0.45 : 0.35 }, svg));
+      const cx = X(r.pca[0]), cy = Y(r.pca[1]);
+      S("circle", { cx, cy, r: 14, fill: "none", stroke: col, class: "pulse-ring" }, svg);
+      S("circle", { cx, cy, r: 6, fill: col, stroke: "#fff", "stroke-width": 2 }, svg);
+      const t = S("text", { x: cx + (cx > W - 110 ? -12 : 12), y: cy - 10, "text-anchor": cx > W - 110 ? "end" : "start", class: "tick", style: `fill:${C.text}` }, svg);
+      t.textContent = r.gamertag;
+    }
+
+    // ---- history table (from the database)
+    const tbody = $("#scan-table tbody");
+    function loadHistory(freshId) {
+      api("/api/scans?limit=50").then((rows) => {
+        $("#db-count").textContent = `· ${rows.length} record${rows.length === 1 ? "" : "s"}`;
+        if (!rows.length) { tbody.innerHTML = `<tr><td colspan="7" class="muted empty">No scans yet — run your first scan above.</td></tr>`; return; }
+        tbody.innerHTML = rows.map((s) => {
+          const m = TIER_META[s.tier] || TIER_META.review;
+          const t = new Date(s.created_at);
+          return `<tr class="${s.id === freshId ? "fresh" : ""}"><td class="mono muted">${s.id}</td>
+            <td class="mono muted">${t.toLocaleDateString([], { day: "2-digit", month: "short" })} ${t.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</td>
+            <td class="mono">${esc(s.gamertag)}</td><td class="mono muted">${esc(s.match_id || "—")}</td><td class="muted">${esc(s.source)}</td>
+            <td class="mono" style="color:${m.color}">${s.score.toFixed(2)}</td>
+            <td><span class="tier" style="color:${m.color};border:1px solid ${m.color}55;background:${m.color}14">${m.label}</span></td></tr>`;
+        }).join("");
+      }).catch(() => {});
+    }
+    $("#db-refresh").addEventListener("click", () => loadHistory());
+    $("#db-clear").addEventListener("click", () => {
+      if (!backendOnline || !confirm("Delete all saved scans from the database?")) return;
+      api("/api/scans", { method: "DELETE" }).then(() => { loadHistory(); check(); }).catch(() => {});
+    });
+  }
+
+  /* ---------- parameter lab ---------- */
+  function renderLab({ D, players }) {
+    const S0 = D.sensitivity; if (!S0) { $("#lab").remove(); return; }
+    const eG = S0.eps_grid, mG = S0.min_samples_grid;
+    const find = (e, m) => S0.runs.find((r) => r.min_samples === m && Math.abs(r.eps - e) < 1e-6);
+    const kneeEps = D.model.eps, defMs = D.model.min_samples;
+    const nearestIdx = (v) => eG.reduce((b, e, i) => (Math.abs(e - v) < Math.abs(eG[b] - v) ? i : b), 0);
+    let ei = nearestIdx(kneeEps), ms = mG.includes(defMs) ? defMs : mG[0];
+    const range = $("#lab-eps"); range.max = eG.length - 1; range.value = ei;
+    $("#lab-tag").textContent = `${S0.runs.length} DBSCAN runs`;
+    const seg = $("#lab-ms");
+    mG.forEach((m) => { const b = el("button", m === ms ? "active" : "", m); b.type = "button"; b.addEventListener("click", () => { ms = m; $$("button", seg).forEach((x) => x.classList.toggle("active", x === b)); update(); }); seg.append(b); });
+    const best = S0.runs.filter((r) => r.min_samples === defMs).reduce((a, b) => (b.f1 > a.f1 ? b : a));
+    $("#lab-knee").addEventListener("click", () => { ms = defMs; $$("button", seg).forEach((x) => x.classList.toggle("active", +x.textContent === ms)); ei = nearestIdx(kneeEps); range.value = ei; update(); });
+    $("#lab-best").addEventListener("click", () => { ms = best.min_samples; $$("button", seg).forEach((x) => x.classList.toggle("active", +x.textContent === ms)); ei = nearestIdx(best.eps); range.value = ei; update(); });
+    range.addEventListener("input", () => { ei = +range.value; update(); });
+
+    let curveHost = $("#lab-curve"), mapHost = $("#lab-map"), mapMarks = null;
+    function drawCurve() {
+      const f = frame(curveHost, { t: 14, r: 12, b: 40, l: 40 }); const { svg, m, iw, ih } = f;
+      const runs = S0.runs.filter((r) => r.min_samples === ms);
+      const xs = (v) => ((v - eG[0]) / (eG[eG.length - 1] - eG[0])) * iw, ys = (v) => ih - v * ih;
+      axes(f, xs, ys, { xTicks: niceTicks(eG[0], eG[eG.length - 1], 6), yTicks: [0, 0.25, 0.5, 0.75, 1], xLabel: "ε", yFmt: (v) => v.toFixed(2), xFmt: (v) => v.toFixed(1) });
+      const g = S("g", { transform: `translate(${m.l},${m.t})` }, svg);
+      [["precision", C.violet, 1.6], ["recall", C.pink, 1.6], ["f1", C.cyan, 2.6]].forEach(([k, c, w]) => {
+        S("path", { d: runs.map((r, i) => `${i ? "L" : "M"}${xs(r.eps).toFixed(1)},${ys(r[k]).toFixed(1)}`).join(""), fill: "none", stroke: c, "stroke-width": w, "stroke-linejoin": "round" }, g);
+      });
+      const kx = xs(kneeEps);
+      S("line", { x1: kx, x2: kx, y1: 0, y2: ih, stroke: "rgba(255,255,255,.35)", "stroke-dasharray": "3 4" }, g);
+      S("text", { x: kx + 5, y: ih - 6, class: "tick" }, g).textContent = "knee";
+      const cur = find(eG[ei], ms), cx = xs(eG[ei]);
+      S("line", { x1: cx, x2: cx, y1: 0, y2: ih, stroke: C.text, "stroke-width": 1.2 }, g);
+      S("circle", { cx, cy: ys(cur.f1), r: 5.5, fill: C.cyan, stroke: "#fff", "stroke-width": 2 }, g);
+    }
+    function drawMap() {
+      mapHost.innerHTML = "";
+      const W = mapHost.clientWidth, H = mapHost.clientHeight, pad = 16;
+      const svg = S("svg", { width: W, height: H, class: "chart" }, mapHost);
+      const xs0 = players.map((p) => p.pca_x), ys0 = players.map((p) => p.pca_y);
+      const [x0, x1, y0, y1] = [Math.min(...xs0), Math.max(...xs0), Math.min(...ys0), Math.max(...ys0)];
+      S("rect", { x: 0, y: 0, width: W, height: H, rx: 14, fill: "rgba(0,0,0,.25)", stroke: "rgba(255,255,255,.08)" }, svg);
+      mapMarks = players.map((p) => {
+        const c = S("circle", { cx: pad + ((p.pca_x - x0) / (x1 - x0)) * (W - pad * 2), cy: H - pad - ((p.pca_y - y0) / (y1 - y0)) * (H - pad * 2), r: 3.4, class: "pt" }, svg);
+        c.addEventListener("mousemove", (e) => tip.show(`<b>${p.player_id}</b><br>truth: ${p.true_label}`, e)); c.addEventListener("mouseleave", tip.hide);
+        return c;
+      });
+    }
+    function paintMap(run) {
+      const flagged = new Set(run.anomalies);
+      mapMarks.forEach((c, i) => {
+        const p = players[i], fl = flagged.has(i), cheat = p.true_label !== "human";
+        const col = fl ? (cheat ? C.pink : C.amber) : cheat ? "#fff" : C.cyan;
+        c.style.fill = fl || cheat ? col : C.cyan; c.style.fillOpacity = fl ? 0.95 : cheat ? 0.9 : 0.4;
+        c.setAttribute("r", fl ? 5 : cheat ? 4.5 : 3.2);
+        c.style.stroke = !fl && cheat ? C.pink : "none"; c.style.strokeWidth = 1.5;
+      });
+    }
+    function update() {
+      const run = find(eG[ei], ms);
+      $("#lab-eps-v").textContent = eG[ei].toFixed(2);
+      range.style.setProperty("--p", `${(ei / (eG.length - 1)) * 100}%`);
+      const cheats = players.filter((p) => p.true_label !== "human").length;
+      const caught = run.anomalies.filter((i) => players[i].true_label !== "human").length;
+      const fp = run.flagged - caught;
+      $("#lab-metrics").innerHTML = [["F1", run.f1.toFixed(2), C.cyan], ["Precision", run.precision.toFixed(2), C.violet], ["Recall", run.recall.toFixed(2), C.pink],
+        ["Flagged", run.flagged, C.text], ["False +", fp, fp ? C.amber : C.green], ["Missed", cheats - caught, cheats - caught ? C.pink : C.green]]
+        .map(([k, v, c]) => `<div class="lm"><b style="color:${c}">${v}</b><span>${k}</span></div>`).join("");
+      const isKnee = Math.abs(eG[ei] - kneeEps) < 0.051 && ms === defMs;
+      $("#lab-note").innerHTML = eG[ei] < 1.2 ? "ε too small: almost nobody has enough neighbours, so <b>everyone</b> looks like noise."
+        : eG[ei] > 3.5 ? "ε too large: cheaters get swallowed into the normal cluster and are <b>missed</b>."
+        : isKnee ? "This is the ε chosen <b>without labels</b> by the k-distance knee — the honest choice."
+        : Math.abs(eG[ei] - best.eps) < 0.051 && ms === best.min_samples ? "Best F1 on this data — but picking ε with the answers in hand is <b>data leakage</b>. The knee method needs no labels."
+        : `${run.clusters} normal cluster${run.clusters === 1 ? "" : "s"} · ${run.flagged} players outside dense regions.`;
+      drawCurve(); if (!mapMarks) drawMap(); paintMap(run);
+    }
+    onReveal($("#lab"), () => { update(); redraws.push(() => { mapMarks = null; update(); }); });
+  }
+
+  /* ---------- benchmark ---------- */
+  function renderBench({ D }) {
+    const B = D.benchmark; if (!B) { $("#bench").remove(); return; }
+    const rates = Object.keys(B[0].by_rate);
+    const RC = [C.amber, C.cyan, C.violet];
+    $("#bench-table").innerHTML = `<thead><tr><th>Method</th><th>Needs cheat rate?</th><th>F1 @5%</th><th>F1 @12%</th><th>F1 @20%</th><th>Average F1</th><th>Worst-case F1</th></tr></thead><tbody>` +
+      B.map((b) => `<tr class="${b.method === "DBSCAN" ? "win" : ""}"><td>${b.method}<div class="muted" style="font-weight:400;font-size:12px">${b.note}</div></td>
+        <td class="${b.needs_contamination ? "yes" : "no"}">${b.needs_contamination ? "yes — must guess" : "no"}</td>
+        ${rates.map((r) => `<td class="mono">${b.by_rate[r].toFixed(2)}</td>`).join("")}
+        <td class="mono">${b.f1_mean.toFixed(2)}</td><td class="mono" style="color:${b.f1_min >= 0.85 ? C.green : C.muted}">${b.f1_min.toFixed(2)}</td></tr>`).join("") + "</tbody>";
+    const host = $("#bench-chart");
+    const draw = (animate) => {
+      const f = frame(host, { t: 30, r: 12, b: 48, l: 40 }); const { svg, m, iw, ih } = f;
+      const n = B.length, gw = iw / n, bw = Math.min(26, (gw - 24) / rates.length);
+      const ys = (v) => ih - v * ih;
+      axes(f, (i) => gw * i + gw / 2, ys, { xTicks: [], yTicks: [0, 0.25, 0.5, 0.75, 1], yFmt: (v) => v.toFixed(2) });
+      const g = S("g", { transform: `translate(${m.l},${m.t})` }, svg);
+      B.forEach((b, i) => {
+        const cx = gw * i + gw / 2;
+        if (b.method === "DBSCAN") S("rect", { x: gw * i + 4, y: -22, width: gw - 8, height: ih + 22, rx: 10, fill: "rgba(255,61,129,.07)", stroke: "rgba(255,61,129,.3)" }, g);
+        rates.forEach((r, k) => {
+          const v = b.by_rate[r], x = cx + (k - (rates.length - 1) / 2) * (bw + 4) - bw / 2;
+          const rect = S("rect", { x, y: ys(v), width: bw, height: ih - ys(v), rx: 3, fill: RC[k], class: "bar" }, g);
+          if (animate && !REDUCED) { rect.style.transformOrigin = `0 ${ih}px`; rect.animate([{ transform: "scaleY(0)" }, { transform: "scaleY(1)" }], { duration: 900, delay: i * 90 + k * 40, easing: "cubic-bezier(.2,.7,.2,1)", fill: "backwards" }); }
+          rect.addEventListener("mousemove", (e) => tip.show(`<b>${b.method}</b><br>guessed rate ${Math.round(+r * 100)}% → F1 ${v.toFixed(3)}`, e));
+          rect.addEventListener("mouseleave", tip.hide);
+        });
+        const t = S("text", { x: cx, y: ih + 20, "text-anchor": "middle", class: "tick", style: b.method === "DBSCAN" ? `fill:${C.pink};font-weight:600` : "" }, g);
+        t.textContent = b.method;
+      });
+      const lg = S("g", { transform: `translate(0,-24)` }, g);
+      rates.forEach((r, k) => { S("rect", { x: k * 118, y: 0, width: 10, height: 10, rx: 2, fill: RC[k] }, lg); S("text", { x: k * 118 + 16, y: 9, class: "tick" }, lg).textContent = `guessed ${Math.round(+r * 100)}%`; });
+    };
+    onReveal($("#bench"), () => { draw(true); redraws.push(() => draw(false)); });
+  }
+
+  /* =========================================================
+     BEAT SENTINEL — red-team challenge
+     ========================================================= */
+  function renderChallenge({ D }) {
+    const form = $("#ch-form"), btn = $("#ch-btn"), out = $("#ch-result"), err = $("#ch-error"), tagIn = $("#ch-tag");
+    const KEYS = ["aim_lock", "smoothing", "speed_boost", "reaction_ms", "reaction_jitter"];
+    const FMT = { aim_lock: (v) => `${Math.round(v * 100)}%`, smoothing: (v) => `${Math.round(v * 100)}%`, speed_boost: (v) => `${(+v).toFixed(2)}×`, reaction_ms: (v) => `${Math.round(v)} ms`, reaction_jitter: (v) => `± ${Math.round(v)} ms` };
+    const trig = $("#c-auto_trigger");
+    const LOADOUTS = [
+      ["Honest", C.cyan, { aim_lock: 0, smoothing: 0, speed_boost: 1, auto_trigger: false, reaction_ms: 150, reaction_jitter: 30 }],
+      ["Rage aimbot", C.pink, { aim_lock: 1, smoothing: 0, speed_boost: 1, auto_trigger: true, reaction_ms: 60, reaction_jitter: 5 }],
+      ["Closet cheater", C.violet, { aim_lock: 0.25, smoothing: 0.6, speed_boost: 1, auto_trigger: false, reaction_ms: 150, reaction_jitter: 30 }],
+      ["Triggerbot", C.amber, { aim_lock: 0, smoothing: 0, speed_boost: 1, auto_trigger: true, reaction_ms: 90, reaction_jitter: 8 }],
+      ["Speed demon", C.green, { aim_lock: 0, smoothing: 0, speed_boost: 1.8, auto_trigger: false, reaction_ms: 150, reaction_jitter: 30 }],
+    ];
+    const set = (k, v) => {
+      const r = $("#c-" + k); r.value = v;
+      r.style.setProperty("--p", `${((r.value - r.min) / (r.max - r.min)) * 100}%`);
+      $("#v-" + k).textContent = FMT[k](+r.value);
+    };
+    const syncTrig = () => $("#ch-trig").classList.toggle("off", !trig.checked);
+    KEYS.forEach((k) => $("#c-" + k).addEventListener("input", (e) => { set(k, e.target.value); $$("#ch-presets .chip").forEach((c) => c.classList.remove("active")); }));
+    trig.addEventListener("change", () => { syncTrig(); $$("#ch-presets .chip").forEach((c) => c.classList.remove("active")); });
+    const apply = (cfg) => { KEYS.forEach((k) => set(k, cfg[k])); trig.checked = cfg.auto_trigger; syncTrig(); };
+    LOADOUTS.forEach(([name, color, cfg], i) => {
+      const b = el("button", "chip" + (i === 0 ? " active" : ""), `<i style="background:${color};box-shadow:0 0 8px ${color}"></i>${name}`);
+      b.type = "button"; b.style.color = color;
+      b.addEventListener("click", () => { apply(cfg); $$("#ch-presets .chip").forEach((c) => c.classList.toggle("active", c === b)); });
+      $("#ch-presets").append(b);
+    });
+    apply(LOADOUTS[0][2]);
+
+    let myId = null;
+    function loadBoard() {
+      api("/api/leaderboard").then((lb) => {
+        $("#lb-stats").textContent = lb.attempts ? `${lb.attempts} cheats deployed · ${lb.caught} caught (${Math.round((lb.caught / lb.attempts) * 100)}%)` : "";
+        const row = (r, fame) => `<li class="${r.id === myId ? "me" : ""}"><span><b>${esc(r.gamertag)}</b><small>${cheatSummary(r.params)}</small></span>
+          <span class="v" style="color:${fame ? C.green : C.pink}">${fame ? r.evasion_score.toFixed(1) : Math.round(r.detection_rate * 100) + "%"}<small>${fame ? `+${r.power.toFixed(0)}% adv · ${Math.round(r.detection_rate * 100)}% det.` : `+${r.power.toFixed(0)}% adv`}</small></span></li>`;
+        $("#lb-fame").innerHTML = lb.hall_of_fame.length ? lb.hall_of_fame.map((r) => row(r, true)).join("") : `<li class="empty">No cheat has slipped past Sentinel yet.</li>`;
+        $("#lb-shame").innerHTML = lb.wall_of_shame.length ? lb.wall_of_shame.map((r) => row(r, false)).join("") : `<li class="empty">Nobody caught yet — be the first.</li>`;
+      }).catch(() => {
+        $("#lb-fame").innerHTML = $("#lb-shame").innerHTML = `<li class="empty">Start the backend to see the leaderboard.</li>`;
+      });
+    }
+    function cheatSummary(p) {
+      const parts = [];
+      if (p.aim_lock > 0) parts.push(`aim ${Math.round(p.aim_lock * 100)}%${p.smoothing > 0 ? ` · smooth ${Math.round(p.smoothing * 100)}%` : ""}`);
+      if (p.auto_trigger) parts.push(`trigger ${Math.round(p.reaction_ms)}±${Math.round(p.reaction_jitter)}ms`);
+      if (p.speed_boost > 1) parts.push(`speed ${(+p.speed_boost).toFixed(2)}×`);
+      return parts.join(" · ") || "no cheat";
+    }
+    onReveal($("#lb"), loadBoard);
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault(); err.textContent = "";
+      const tag = tagIn.value.trim() || "Anonymous";
+      if (!/^[A-Za-z0-9_.\- ]{2,24}$/.test(tag)) { err.textContent = "Gamertag: 2–24 characters (letters, numbers, space, _ . -)."; return; }
+      if (!backendOnline) { err.innerHTML = "Backend offline — start it with <code>python backend/app.py</code>."; return; }
+      const cheat = { auto_trigger: trig.checked }; KEYS.forEach((k) => (cheat[k] = +$("#c-" + k).value));
+      btn.disabled = true; $(".scan-btn-txt", btn).textContent = "Deploying…";
+      out.innerHTML = `<div class="sr-scanning"><div class="trial-grid" id="tg">${Array.from({ length: 20 }, (_, i) => `<span>${i + 1}</span>`).join("")}</div>
+        <div class="term">${["simulating 20 matches · 300 ticks each", "extracting 10 behavioural features per match", "scoring each match against DBSCAN core", "INSERT INTO challenges → sentinel.db"].map((l, i) => `<div class="ok" style="animation-delay:${i * 0.5}s">${l}</div>`).join("")}</div></div>`;
+      const cells = $$("#tg span");
+      let k = 0; const spin = setInterval(() => { cells.forEach((c) => c.classList.remove("run")); cells[k % 20].classList.add("run"); k++; }, 70);
+      try {
+        const [r] = await Promise.all([api("/api/challenge", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ gamertag: tag, cheat }) }), new Promise((res) => setTimeout(res, REDUCED ? 0 : 1600))]);
+        clearInterval(spin); cells.forEach((c) => c.classList.remove("run"));
+        for (let i = 0; i < 20; i++) { cells[i].classList.add(r.scores[i] > 1 ? "c" : "e"); if (!REDUCED) await new Promise((res) => setTimeout(res, 45)); }
+        if (!REDUCED) await new Promise((res) => setTimeout(res, 450));
+        myId = r.id; showOutcome(r); loadBoard();
+      } catch (ex) {
+        clearInterval(spin);
+        out.innerHTML = `<div class="sr-idle"><div class="skull">☠</div><h3>Deploy failed</h3><p class="muted">${esc(ex.message)}</p></div>`;
+      } finally { btn.disabled = false; $(".scan-btn-txt", btn).textContent = "Deploy cheat · 20 matches"; }
+    });
+
+    function showOutcome(r) {
+      const caught = r.verdict === "caught", honest = r.verdict === "honest";
+      const col = honest ? C.cyan : caught ? C.pink : C.green;
+      const title = honest ? "CLEAN" : caught ? "CAUGHT" : "UNDETECTED";
+      const line = honest ? "No cheat enabled — Sentinel saw an ordinary player. Turn something on and try to sneak past."
+        : caught ? `Sentinel flagged your cheat in <b>${r.caught} of ${r.trials}</b> matches. ${r.power > 40 ? "That much advantage is impossible to hide." : "Even a small edge leaves a fingerprint."}`
+        : `You slipped past in <b>${r.trials - r.caught} of ${r.trials}</b> matches — but your cheat only gave <b>+${r.power.toFixed(0)}%</b> advantage. ${r.power < 15 ? "Sentinel forces cheaters to play almost like humans." : "Nicely done — you're on the leaderboard."}`;
+      const rs = r.replay.reasons;
+      out.innerHTML = `<div class="sr-done">
+        <div class="sr-top"><div><span class="mono muted small">DEPLOYMENT #${r.id} · ${esc(r.gamertag)}</span>
+          <div class="ch-verdict" style="color:${col};text-shadow:0 0 40px ${col}77">${title}</div></div>
+          ${r.verdict === "evaded" ? `<div style="text-align:right"><span class="mono muted small">RANK</span><div class="verdict-label" style="color:${C.text};margin:6px 0 0">#${r.rank}</div></div>` : ""}</div>
+        <div class="trial-grid">${r.scores.map((s, i) => `<span class="${s > 1 ? "c" : "e"}" title="match ${i + 1}: score ${s.toFixed(2)}">${s > 1 ? "✕" : "✓"}</span>`).join("")}</div>
+        <p class="sr-text">${line}</p>
+        <div class="ch-stats">
+          <div class="lm"><b style="color:${C.pink}">${Math.round(r.detection_rate * 100)}%</b><span>detection</span></div>
+          <div class="lm"><b style="color:${C.amber}">+${r.power.toFixed(0)}%</b><span>advantage</span></div>
+          <div class="lm"><b style="color:${C.green}">${r.evasion_score.toFixed(1)}</b><span>evasion score</span></div>
+          <div class="lm"><b style="color:${C.cyan}">${r.replay.score.toFixed(2)}</b><span>median score</span></div>
+        </div>
+        <div><div class="mini-title">Replay · median match <button class="replay-btn" type="button" id="ch-rp">↻ replay</button></div><canvas class="ch-replay" id="ch-canvas"></canvas></div>
+        <div><div class="mini-title">${caught ? "What gave you away" : "Sentinel's closest look"}</div>
+          ${rs.map((x) => { const zc = Math.abs(x.z) > 2 ? col : C.cyan; return `<div class="reason"><b>${x.label}</b><span class="rz" style="color:${zc}">${x.z >= 0 ? "+" : ""}${x.z.toFixed(1)}σ</span><div class="rbar"><div data-w="${Math.min(Math.abs(x.z) / 6, 1) * 100}%" style="background:${zc}"></div></div><p>value <b>${fv(x.value)}</b> vs honest median ${fv(x.normal)}</p></div>`; }).join("")}
+        </div></div>`;
+      requestAnimationFrame(() => requestAnimationFrame(() => $$(".rbar div", out).forEach((b) => (b.style.width = b.dataset.w))));
+      const play = () => replayMatch($("#ch-canvas"), r.replay, col);
+      play(); $("#ch-rp").addEventListener("click", play);
+    }
+
+    let rpAnim;
+    function replayMatch(cv, rp, col) {
+      cancelAnimationFrame(rpAnim);
+      const dpr = Math.min(window.devicePixelRatio || 1, 2), W = cv.clientWidth, H = cv.clientHeight;
+      cv.width = W * dpr; cv.height = H * dpr;
+      const g = cv.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const P = rp.path; const xs = P.map((p) => p[0]), ys = P.map((p) => p[1]);
+      const pad = 90; let x0 = Math.min(...xs) - pad, x1 = Math.max(...xs) + pad, y0 = Math.min(...ys) - pad, y1 = Math.max(...ys) + pad;
+      const s = Math.min(W / (x1 - x0), H / (y1 - y0)); const ox = (W - (x1 - x0) * s) / 2, oy = (H - (y1 - y0) * s) / 2;
+      const X = (v) => ox + (v - x0) * s, Y = (v) => H - (oy + (v - y0) * s);
+      const shots = rp.shots; const dur = REDUCED ? 1 : 6000; const t0 = performance.now();
+      const frame = (now) => {
+        const k = Math.min(1, (now - t0) / dur), tick = k * (P.length * 2 - 1), n = Math.max(1, Math.floor(tick / 2));
+        g.clearRect(0, 0, W, H);
+        g.strokeStyle = "rgba(255,255,255,.04)"; g.lineWidth = 1;
+        for (let gx = Math.ceil(x0 / 50) * 50; gx < x1; gx += 50) { g.beginPath(); g.moveTo(X(gx), 0); g.lineTo(X(gx), H); g.stroke(); }
+        for (let gy = Math.ceil(y0 / 50) * 50; gy < y1; gy += 50) { g.beginPath(); g.moveTo(0, Y(gy)); g.lineTo(W, Y(gy)); g.stroke(); }
+        g.beginPath(); P.forEach(([x, y], i) => (i ? g.lineTo(X(x), Y(y)) : g.moveTo(X(x), Y(y)))); g.strokeStyle = "rgba(255,255,255,.07)"; g.lineWidth = 1; g.stroke();
+        g.beginPath(); for (let i = 0; i < n; i++) { const [x, y] = P[i]; i ? g.lineTo(X(x), Y(y)) : g.moveTo(X(x), Y(y)); }
+        g.strokeStyle = col; g.lineWidth = 2; g.shadowColor = col; g.shadowBlur = 10; g.stroke(); g.shadowBlur = 0;
+        shots.forEach((sh) => {
+          const age = tick - sh.t; if (age < 0 || age > 14) return;
+          const a = 1 - age / 14, ex = sh.x + 70 * Math.cos((sh.target * Math.PI) / 180), ey = sh.y + 70 * Math.sin((sh.target * Math.PI) / 180);
+          const ax = sh.x + 90 * Math.cos((sh.aim * Math.PI) / 180), ay = sh.y + 90 * Math.sin((sh.aim * Math.PI) / 180);
+          g.globalAlpha = a;
+          g.beginPath(); g.arc(X(ex), Y(ey), 5, 0, Math.PI * 2); g.fillStyle = sh.hit ? C.pink : C.amber; g.fill();
+          g.beginPath(); g.moveTo(X(sh.x), Y(sh.y)); g.lineTo(X(ax), Y(ay)); g.strokeStyle = sh.fire ? "#fff" : "rgba(255,255,255,.4)"; g.lineWidth = sh.fire ? 1.4 : 1; g.setLineDash(sh.fire ? [] : [3, 3]); g.stroke(); g.setLineDash([]);
+          if (sh.hit) { g.beginPath(); g.arc(X(ex), Y(ey), 5 + 14 * (1 - a), 0, Math.PI * 2); g.strokeStyle = C.pink; g.lineWidth = 1.5; g.stroke(); if (sh.hs) { g.fillStyle = C.pink; g.font = "10px JetBrains Mono"; g.fillText("HEADSHOT", X(ex) + 9, Y(ey) - 8); } }
+          g.globalAlpha = 1;
+        });
+        const [hx, hy] = P[n - 1];
+        g.beginPath(); g.arc(X(hx), Y(hy), 5, 0, Math.PI * 2); g.fillStyle = "#fff"; g.fill();
+        g.beginPath(); g.arc(X(hx), Y(hy), 11 + 3 * Math.sin(now / 150), 0, Math.PI * 2); g.strokeStyle = col + "99"; g.lineWidth = 1.2; g.stroke();
+        const fired = shots.filter((sh) => sh.t <= tick && sh.fire).length, hits = shots.filter((sh) => sh.t <= tick && sh.hit).length;
+        g.fillStyle = C.muted; g.font = "11px JetBrains Mono";
+        g.fillText(`t ${(tick / 10).toFixed(1)}s   shots ${fired}   hits ${hits}`, 12, H - 12);
+        if (k < 1) rpAnim = requestAnimationFrame(frame);
+      };
+      rpAnim = requestAnimationFrame(frame);
+    }
+  }
+
+  /* =========================================================
+     MATCH REPLAY THEATRE
+     ========================================================= */
+  function renderTheatre({ D, players }) {
+    const cv = $("#th-canvas"), g = cv.getContext("2d");
+    const matches = [...new Set(players.map((p) => p.match_id))].sort();
+    let cur = matches.find((m) => players.some((p) => p.match_id === m && p.is_anomaly)) || matches[0];
+    let t = 0, playing = !REDUCED, speed = 1, last = 0, hl = null, W = 0, H = 0, dpr = 1, visible = false;
+    const box = $("#th-matches");
+    matches.forEach((m) => {
+      const n = players.filter((p) => p.match_id === m && p.is_anomaly).length;
+      const b = el("button", m === cur ? "active" : "", `${m}${n ? `<i></i>${n}` : ""}`); b.type = "button";
+      b.addEventListener("click", () => { cur = m; t = 0; $$("button", box).forEach((x) => x.classList.toggle("active", x === b)); side(); });
+      box.append(b);
+    });
+    const colorOf = (p) => (p.is_anomaly ? TIER_COLOR[p.tier] : C.cyan);
+    function side() {
+      const ps = players.filter((p) => p.match_id === cur).sort((a, b) => b.anomaly_score - a.anomaly_score);
+      $("#th-match-label").textContent = `MATCH ${cur} · ${ps.length} PLAYERS · ${ps.filter((p) => p.is_anomaly).length} FLAGGED`;
+      $("#th-players").innerHTML = ps.map((p) => `<button type="button" class="th-p ${p.is_anomaly ? "flag" : ""}" data-id="${p.player_id}"><i style="background:${colorOf(p)};box-shadow:0 0 8px ${colorOf(p)}"></i>
+        <span><b>${p.player_id.split("_")[1]}</b><small>${p.is_anomaly ? `${p.tier} · ${FEAT_INFO[p.top_reason][0].toLowerCase()}` : "normal"}</small></span><span class="s" style="color:${colorOf(p)}">${p.anomaly_score.toFixed(2)}</span></button>`).join("");
+      $$(".th-p").forEach((b) => {
+        b.addEventListener("mouseenter", () => (hl = b.dataset.id)); b.addEventListener("mouseleave", () => (hl = null));
+        b.addEventListener("click", () => { selectPlayer && players.find((p) => p.player_id === b.dataset.id).is_anomaly && (selectPlayer(b.dataset.id), $("#detections").scrollIntoView({ behavior: "smooth" })); });
+      });
+    }
+    const resize = () => { dpr = Math.min(window.devicePixelRatio || 1, 2); W = cv.clientWidth; H = cv.clientHeight; cv.width = W * dpr; cv.height = H * dpr; g.setTransform(dpr, 0, 0, dpr, 0, 0); };
+    const play = $("#th-play"), range = $("#th-time");
+    const setPlay = (v) => { playing = v; play.textContent = v ? "❚❚" : "▶"; };
+    play.addEventListener("click", () => { if (t >= 1) t = 0; setPlay(!playing); });
+    range.addEventListener("input", () => { t = range.value / 100; setPlay(false); });
+    $$("#th-speed button").forEach((b) => b.addEventListener("click", () => { speed = +b.dataset.s; $$("#th-speed button").forEach((x) => x.classList.toggle("active", x === b)); }));
+    new IntersectionObserver(([e]) => (visible = e.isIntersecting)).observe(cv);
+    window.addEventListener("resize", resize);
+    const DUR = 30000;
+    function draw(now) {
+      const dt = last ? now - last : 0; last = now;
+      if (visible) {
+        if (!W) resize();
+        if (playing) { t += (dt * speed) / DUR; if (t >= 1) { t = 1; setPlay(false); } }
+        range.value = t * 100; range.style.setProperty("--p", `${t * 100}%`);
+        const sec = t * 30; $("#th-clock").textContent = `00:${String(Math.floor(sec)).padStart(2, "0")} / 00:30`;
+        const ps = players.filter((p) => p.match_id === cur);
+        const all = ps.flatMap((p) => D.trajectories[p.player_id] || []);
+        const pad = 40; let x0 = Math.min(...all.map((q) => q[0])) - pad, x1 = Math.max(...all.map((q) => q[0])) + pad, y0 = Math.min(...all.map((q) => q[1])) - pad, y1 = Math.max(...all.map((q) => q[1])) + pad;
+        const sc = Math.min(W / (x1 - x0), H / (y1 - y0)), ox = (W - (x1 - x0) * sc) / 2, oy = (H - (y1 - y0) * sc) / 2;
+        const X = (v) => ox + (v - x0) * sc, Y = (v) => H - (oy + (v - y0) * sc);
+        g.clearRect(0, 0, W, H);
+        g.strokeStyle = "rgba(255,255,255,.035)"; g.lineWidth = 1;
+        for (let gx = Math.ceil(x0 / 50) * 50; gx < x1; gx += 50) { g.beginPath(); g.moveTo(X(gx), 0); g.lineTo(X(gx), H); g.stroke(); }
+        for (let gy = Math.ceil(y0 / 50) * 50; gy < y1; gy += 50) { g.beginPath(); g.moveTo(0, Y(gy)); g.lineTo(W, Y(gy)); g.stroke(); }
+        ps.forEach((p) => {
+          const tr = D.trajectories[p.player_id]; if (!tr || tr.length < 2) return;
+          const f = t * (tr.length - 1), i = Math.floor(f), fr = f - i;
+          const col = colorOf(p), dim = hl && hl !== p.player_id;
+          g.globalAlpha = dim ? 0.15 : 1;
+          g.beginPath(); for (let k = 0; k <= i; k++) { const [x, y] = tr[k]; k ? g.lineTo(X(x), Y(y)) : g.moveTo(X(x), Y(y)); }
+          g.strokeStyle = col; g.lineWidth = p.is_anomaly ? 2.2 : 1.2; g.globalAlpha = (dim ? 0.1 : p.is_anomaly ? 0.85 : 0.35);
+          if (p.is_anomaly) { g.shadowColor = col; g.shadowBlur = 12; }
+          g.stroke(); g.shadowBlur = 0; g.globalAlpha = dim ? 0.2 : 1;
+          const a = tr[i], b = tr[Math.min(i + 1, tr.length - 1)];
+          const hx = a[0] + (b[0] - a[0]) * fr, hy = a[1] + (b[1] - a[1]) * fr;
+          g.beginPath(); g.arc(X(hx), Y(hy), p.is_anomaly ? 5 : 3.5, 0, Math.PI * 2); g.fillStyle = p.is_anomaly ? "#fff" : col; g.fill();
+          if (p.is_anomaly) {
+            g.beginPath(); g.arc(X(hx), Y(hy), 11 + 4 * Math.sin(now / 160), 0, Math.PI * 2); g.strokeStyle = col; g.lineWidth = 1.2; g.stroke();
+            g.fillStyle = col; g.font = "600 11px JetBrains Mono"; g.fillText(`${p.player_id.split("_")[1]} · ${p.tier.toUpperCase()}`, X(hx) + 14, Y(hy) - 10);
+          } else if (hl === p.player_id) { g.fillStyle = C.text; g.font = "11px JetBrains Mono"; g.fillText(p.player_id.split("_")[1], X(hx) + 9, Y(hy) - 8); }
+          g.globalAlpha = 1;
+        });
+      }
+      requestAnimationFrame(draw);
+    }
+    side(); setPlay(playing);
+    onReveal($("#theatre"), () => { resize(); requestAnimationFrame(draw); });
+  }
+
   /* ---------- conclusion ---------- */
   function renderConclusion({ D, flagged }) {
     const m = D.metrics;
-    $("#concl-text").innerHTML = `Density-based clustering separates honest play from cheating without labels. On ${fmt(D.dataset.rows)} telemetry ticks from ${D.dataset.players} players, DBSCAN (ε = ${D.model.eps.toFixed(2)}, min_samples = ${D.model.min_samples}) flagged ${flagged.length} players, achieving <b>${pct(m.recall)} recall</b>, <b>${pct(m.precision)} precision</b> and an <b>F1 of ${m.f1.toFixed(2)}</b>. Treating small clusters as suspicious lets it catch coordinated cheaters who share one tool, not only lone outliers.`;
+    const b = D.benchmark || [];
+    const others = b.filter((x) => x.method !== "DBSCAN");
+    const worst = others.length ? Math.min(...others.map((x) => x.f1_min)) : null;
+    $("#concl-text").innerHTML = `Density-based clustering separates honest play from cheating without labels. On ${fmt(D.dataset.rows)} telemetry ticks from ${D.dataset.players} players, DBSCAN (ε = ${D.model.eps.toFixed(2)}, min_samples = ${D.model.min_samples}) flagged ${flagged.length} players, achieving <b>${pct(m.recall)} recall</b>, <b>${pct(m.precision)} precision</b> and an <b>F1 of ${m.f1.toFixed(2)}</b>.${worst != null ? ` Unlike Isolation Forest, LOF, One-Class SVM and K-Means, it needs <b>no guess of the cheat rate</b> — when that guess is wrong their F1 drops as low as ${worst.toFixed(2)}, while DBSCAN stays at ${m.f1.toFixed(2)}.` : ""} The trained model is served by a Flask API that scores new players live and stores every scan in SQLite.`;
   }
 
   /* ---------- hero arena ---------- */

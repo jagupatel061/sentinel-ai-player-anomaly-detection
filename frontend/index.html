@@ -23,12 +23,14 @@
       <span>SENTINEL<b>AI</b></span>
     </a>
     <nav class="nav-links">
+      <a href="#scanner" class="nav-live">Scanner</a>
+      <a href="#challenge" class="nav-red">Beat it</a>
       <a href="#pipeline">Pipeline</a>
-      <a href="#data">Data</a>
-      <a href="#features">Features</a>
       <a href="#dbscan">DBSCAN</a>
       <a href="#detections">Detections</a>
+      <a href="#theatre">Replay</a>
       <a href="#evaluation">Evaluation</a>
+      <a href="#api">API</a>
       <a href="#conclusion">Conclusion</a>
     </nav>
     <div class="status-pill"><span class="dot"></span>SYSTEM ONLINE</div>
@@ -50,8 +52,8 @@
           to expose aimbots, speedhacks and triggerbots — without ever being told who cheats.
         </p>
         <div class="hero-cta reveal">
-          <a class="btn btn-primary" href="#detections">View detections <span>→</span></a>
-          <a class="btn btn-ghost" href="#pipeline">How it works</a>
+          <a class="btn btn-primary" href="#scanner">Scan a player <span>→</span></a>
+          <a class="btn btn-ghost" href="#challenge">☠ Try to beat it</a>
         </div>
         <div class="kpis reveal" id="kpis"></div>
       </div>
@@ -60,11 +62,116 @@
         <span><i class="lg lg-flag"></i>Flagged by DBSCAN</span>
         <span class="mono muted" id="arena-caption">LIVE ARENA</span>
       </div>
-      <a href="#pipeline" class="scroll-cue" aria-label="Scroll down"><span></span></a>
+      <a href="#scanner" class="scroll-cue" aria-label="Scroll down"><span></span></a>
     </section>
 
     <!-- ============ TICKER ============ -->
     <div class="ticker" aria-hidden="true"><div class="ticker-track" id="ticker"></div></div>
+
+
+    <!-- ============ LIVE SCANNER ============ -->
+    <section class="section" id="scanner">
+      <div class="section-head reveal">
+        <span class="sec-num live-num"><i class="dot"></i>LIVE</span>
+        <h2>Scan a player</h2>
+        <p>Enter a player's details and gameplay stats — or upload their match telemetry. The <b>Python backend</b> scores them against DBSCAN's model of normal play and <b>saves every scan to a SQLite database</b>.</p>
+      </div>
+      <div class="api-status reveal" id="api-status"><i></i><span>Connecting to backend…</span></div>
+      <div class="grid-scan">
+        <form class="card scan-form reveal" id="scan-form" autocomplete="off" novalidate>
+          <div class="field-row">
+            <label class="field"><span>Gamertag</span><input id="f-tag" maxlength="24" placeholder="e.g. ShadowSniper_07" required /></label>
+            <label class="field"><span>Match ID <em>optional</em></span><input id="f-match" maxlength="24" placeholder="e.g. RANKED-2291" /></label>
+          </div>
+          <div class="tabs" role="tablist">
+            <button type="button" class="active" data-tab="stats" role="tab">Enter stats</button>
+            <button type="button" data-tab="upload" role="tab">Upload match file</button>
+          </div>
+          <div class="pane" id="pane-stats">
+            <div class="presets"><span class="mono muted small">QUICK FILL</span><div id="presets"></div></div>
+            <div class="sliders" id="sliders"></div>
+          </div>
+          <div class="pane" id="pane-upload" hidden>
+            <label class="drop" id="drop">
+              <input type="file" id="f-file" accept=".csv" />
+              <svg viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>
+              <b id="drop-text">Drop a telemetry .csv here or click to browse</b>
+              <span class="muted">One player's ticks · same columns as <code>player_telemetry.csv</code></span>
+            </label>
+            <p class="samples">No file? Try a sample:
+              <a href="public/samples/sample_human.csv" download>human.csv</a> ·
+              <a href="public/samples/sample_aimbot.csv" download>aimbot.csv</a> ·
+              <a href="public/samples/sample_speedhack.csv" download>speedhack.csv</a></p>
+          </div>
+          <p class="form-error" id="form-error" role="alert"></p>
+          <button class="btn btn-primary scan-btn" id="scan-btn" type="submit"><span class="scan-btn-txt">Run Sentinel scan</span> <span>→</span></button>
+        </form>
+
+        <div class="card scan-result reveal" id="scan-result" aria-live="polite">
+          <div class="sr-idle" id="sr-idle">
+            <div class="radar"><i></i><i></i><i></i><b></b></div>
+            <h3>Awaiting scan</h3>
+            <p class="muted">Pick a quick-fill profile or enter your own numbers, then run the scan.</p>
+          </div>
+        </div>
+
+        <div class="card span-2 reveal">
+          <div class="card-title"><span>Scan database <span class="mono muted small" id="db-count"></span></span>
+            <div class="db-actions"><button type="button" class="link-btn" id="db-refresh">↻ refresh</button><button type="button" class="link-btn danger" id="db-clear">clear</button></div></div>
+          <div class="table-wrap"><table class="scan-table" id="scan-table">
+            <thead><tr><th>#</th><th>Time</th><th>Gamertag</th><th>Match</th><th>Source</th><th>Score</th><th>Verdict</th></tr></thead>
+            <tbody><tr><td colspan="7" class="muted empty">No scans yet.</td></tr></tbody>
+          </table></div>
+          <p class="caption">Stored in <code>backend/sentinel.db</code> (SQLite) · served by <code>GET /api/scans</code></p>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- ============ BEAT SENTINEL (RED TEAM) ============ -->
+    <section class="section" id="challenge">
+      <div class="section-head reveal">
+        <span class="sec-num red-num">☠ RED TEAM</span>
+        <h2>Beat <span class="grad">Sentinel.</span></h2>
+        <p>Design your own cheat. Sentinel drops it into <b>20 simulated matches</b>, runs the full pipeline — telemetry → features → DBSCAN — and tries to catch you. Stay undetected with the biggest advantage to top the <b>Hall of Fame</b>.</p>
+      </div>
+      <div class="grid-ch">
+        <form class="card ch-form reveal" id="ch-form" autocomplete="off" novalidate>
+          <label class="field"><span>Your gamertag</span><input id="ch-tag" maxlength="24" placeholder="e.g. NotACheater_42" /></label>
+          <div class="presets"><span class="mono muted small">LOADOUTS</span><div id="ch-presets"></div></div>
+          <div class="ch-ctl"><div class="sl-top"><span>Aim lock <small>snaps crosshair to enemies</small></span><b class="mono" id="v-aim_lock"></b></div>
+            <input type="range" id="c-aim_lock" min="0" max="1" step="0.01" /></div>
+          <div class="ch-ctl"><div class="sl-top"><span>Smoothing <small>hides the snap · weakens the aim</small></span><b class="mono" id="v-smoothing"></b></div>
+            <input type="range" id="c-smoothing" min="0" max="1" step="0.01" /></div>
+          <div class="ch-ctl"><div class="sl-top"><span>Speed boost <small>movement multiplier</small></span><b class="mono" id="v-speed_boost"></b></div>
+            <input type="range" id="c-speed_boost" min="1" max="2.5" step="0.01" /></div>
+          <label class="switch"><input type="checkbox" id="c-auto_trigger" /><i></i><span>Auto-trigger <small>fires automatically when an enemy appears</small></span></label>
+          <div class="ch-trig" id="ch-trig">
+            <div class="ch-ctl"><div class="sl-top"><span>Reaction delay</span><b class="mono" id="v-reaction_ms"></b></div>
+              <input type="range" id="c-reaction_ms" min="40" max="400" step="1" /></div>
+            <div class="ch-ctl"><div class="sl-top"><span>Reaction randomness</span><b class="mono" id="v-reaction_jitter"></b></div>
+              <input type="range" id="c-reaction_jitter" min="0" max="120" step="1" /></div>
+          </div>
+          <p class="form-error" id="ch-error" role="alert"></p>
+          <button class="btn btn-primary scan-btn deploy-btn" id="ch-btn" type="submit"><span class="scan-btn-txt">Deploy cheat · 20 matches</span> <span>☠</span></button>
+        </form>
+        <div class="card ch-result reveal" id="ch-result" aria-live="polite">
+          <div class="sr-idle">
+            <div class="skull">☠</div>
+            <h3>Can you fool DBSCAN?</h3>
+            <p class="muted">Pick a loadout or build your own cheat, then deploy it. Weak cheats slip through — but then they barely help you.</p>
+          </div>
+        </div>
+        <div class="card span-2 reveal" id="lb">
+          <div class="card-title"><span>Leaderboard</span><span class="mono muted small" id="lb-stats"></span></div>
+          <div class="lb-grid">
+            <div><div class="lb-head fame">🏆 Hall of Fame <small>undetected cheats · ranked by evasion score</small></div><ol class="lb-list" id="lb-fame"></ol></div>
+            <div><div class="lb-head shame">🚨 Wall of Shame <small>caught by Sentinel</small></div><ol class="lb-list" id="lb-shame"></ol></div>
+          </div>
+          <p class="caption">Evasion score = cheat advantage × (1 − detection rate). Stored in the <code>challenges</code> table of <code>sentinel.db</code>.</p>
+        </div>
+      </div>
+    </section>
 
     <!-- ============ PIPELINE ============ -->
     <section class="section" id="pipeline">
@@ -167,6 +274,22 @@
           <div class="chart-box tall" id="pca"></div>
           <div class="pca-legend" id="pca-legend"></div>
         </div>
+        <div class="card span-2 lab reveal" id="lab">
+          <div class="card-title"><span>Parameter lab · sensitivity analysis</span><span class="tag mono" id="lab-tag">210 DBSCAN runs</span></div>
+          <div class="lab-grid">
+            <div class="lab-controls">
+              <label class="lab-ctl"><span class="mono muted small">ε (EPS)</span><b id="lab-eps-v" class="mono"></b>
+                <input type="range" id="lab-eps" min="0" max="1" step="1" aria-label="epsilon"></label>
+              <div class="lab-ctl"><span class="mono muted small">MIN_SAMPLES</span>
+                <div class="seg" id="lab-ms" role="group" aria-label="min_samples"></div></div>
+              <div class="lab-metrics" id="lab-metrics"></div>
+              <div class="lab-actions"><button type="button" class="chip" id="lab-knee">↺ knee ε (no labels)</button><button type="button" class="chip" id="lab-best">★ best F1 (uses labels)</button></div>
+              <p class="caption" id="lab-note"></p>
+            </div>
+            <div><div class="mini-title"><span><span style="color:var(--cyan)">F1</span> · <span style="color:var(--violet)">precision</span> · <span style="color:var(--pink)">recall</span> vs ε</span></div><div class="chart-box lab-chart" id="lab-curve"></div></div>
+            <div><div class="mini-title">Who gets flagged</div><div class="chart-box lab-chart" id="lab-map"></div><div class="lab-legend"><span><i style="background:var(--pink)"></i>cheater caught</span><span><i style="background:var(--amber)"></i>honest but flagged</span><span><i style="background:#fff;box-shadow:0 0 0 2px var(--pink)"></i>cheater missed</span><span><i style="background:var(--cyan);opacity:.5"></i>honest · cleared</span></div></div>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -212,6 +335,29 @@
       </div>
     </section>
 
+
+    <!-- ============ MATCH REPLAY THEATRE ============ -->
+    <section class="section" id="theatre">
+      <div class="section-head reveal">
+        <span class="sec-num live-num"><i class="dot"></i>REPLAY</span>
+        <h2>Match replay theatre</h2>
+        <p>Pick any of the 20 matches and watch all ten players move. Players DBSCAN flagged light up as the match unfolds.</p>
+      </div>
+      <div class="card theatre reveal">
+        <div class="th-matches" id="th-matches" role="group" aria-label="Choose match"></div>
+        <div class="th-body">
+          <div class="th-stage"><canvas id="th-canvas" aria-label="Match replay"></canvas>
+            <div class="th-hud"><span class="mono" id="th-match-label">MATCH</span><span class="mono" id="th-clock">00:00 / 00:30</span></div></div>
+          <div class="th-side"><div class="mini-title">Players in match</div><div id="th-players"></div></div>
+        </div>
+        <div class="th-controls">
+          <button type="button" class="th-play" id="th-play" aria-label="Play or pause">❚❚</button>
+          <input type="range" id="th-time" min="0" max="100" step="0.1" value="0" aria-label="Timeline" />
+          <div class="seg th-speed" id="th-speed"><button type="button" data-s="1" class="active">1×</button><button type="button" data-s="2">2×</button><button type="button" data-s="4">4×</button></div>
+        </div>
+      </div>
+    </section>
+
     <!-- ============ EVALUATION ============ -->
     <section class="section" id="evaluation">
       <div class="section-head reveal">
@@ -234,13 +380,50 @@
           <div class="chart-box" id="hist"></div>
         </div>
         <div class="card span-2 insight reveal" id="insight"></div>
+        <div class="card span-2 reveal" id="bench">
+          <div class="card-title"><span>Benchmark · DBSCAN vs other detectors</span><span class="tag">same features · same data</span></div>
+          <p class="caption bench-intro">Every other method must be <b>told the cheat rate</b> in advance (its <code>contamination</code> parameter). In real life nobody knows that number, so each one is tested with a low <b style="color:var(--amber)">5%</b>, a near-correct <b style="color:var(--cyan)">12%</b> and a high <b style="color:var(--violet)">20%</b> guess. DBSCAN needs no guess at all.</p>
+          <div class="chart-box" id="bench-chart"></div>
+          <div class="table-wrap"><table class="scan-table bench-table" id="bench-table"></table></div>
+        </div>
       </div>
     </section>
 
+    <!-- ============ ARCHITECTURE / API ============ -->
+    <section class="section" id="api">
+      <div class="section-head reveal">
+        <span class="sec-num">07</span>
+        <h2>Under the hood</h2>
+        <p>A complete stack: an offline analysis pipeline, a REST backend that serves the trained model, a SQLite database of every scan, and this front-end.</p>
+      </div>
+      <div class="arch reveal" id="arch">
+        <div class="arch-node"><span class="mono small muted">FRONT-END</span><b>Website</b><p>HTML · CSS · JS<br>hand-built SVG charts</p></div>
+        <div class="arch-link"><span>fetch / JSON</span></div>
+        <div class="arch-node hot"><span class="mono small muted">BACKEND</span><b>Flask REST API</b><p>backend/app.py<br>validates · scores · stores</p></div>
+        <div class="arch-link"><span>SQL</span></div>
+        <div class="arch-node"><span class="mono small muted">DATABASE</span><b>SQLite</b><p>backend/sentinel.db<br>tables <code>scans</code> · <code>challenges</code></p></div>
+        <div class="arch-sub">
+          <div class="arch-node"><span class="mono small muted">OFFLINE</span><b>pipeline.py</b><p>features · DBSCAN · evaluation<br>210-run sensitivity · benchmark</p></div>
+          <div class="arch-node"><span class="mono small muted">MODEL</span><b>DBSCAN</b><p>StandardScaler → ε from k-distance knee<br>score = dist to normal core ÷ ε</p></div>
+        </div>
+      </div>
+      <div class="card reveal endpoints">
+        <div class="card-title"><span>REST endpoints</span><span class="tag mono">backend/app.py</span></div>
+        <div class="ep"><span class="m get">GET</span><code>/api/health</code><p>Server status and number of saved scans</p></div>
+        <div class="ep"><span class="m get">GET</span><code>/api/model</code><p>ε, min_samples, feature ranges and demo presets</p></div>
+        <div class="ep"><span class="m post">POST</span><code>/api/scan</code><p>Score a player from 10 feature values · saved to DB</p></div>
+        <div class="ep"><span class="m post">POST</span><code>/api/scan/upload</code><p>Upload raw match telemetry (.csv) · runs the same feature extraction as the pipeline</p></div>
+        <div class="ep"><span class="m get">GET</span><code>/api/scans</code><p>Scan history from the database</p></div>
+        <div class="ep"><span class="m get">GET</span><code>/api/stats</code><p>Counts per verdict</p></div>
+        <div class="ep"><span class="m post">POST</span><code>/api/challenge</code><p>Beat Sentinel · simulate 20 matches with a user-designed cheat · saved</p></div>
+        <div class="ep"><span class="m get">GET</span><code>/api/leaderboard</code><p>Hall of Fame and Wall of Shame</p></div>
+        <div class="ep"><span class="m del">DELETE</span><code>/api/scans</code><p>Clear scan history</p></div>
+      </div>
+    </section>
     <!-- ============ CONCLUSION ============ -->
     <section class="section" id="conclusion">
       <div class="section-head reveal">
-        <span class="sec-num">07</span>
+        <span class="sec-num">08</span>
         <h2>Conclusion</h2>
       </div>
       <div class="concl-grid">
@@ -271,6 +454,7 @@
         </div>
       </div>
     </section>
+
   </main>
 
   <footer class="footer">
@@ -282,7 +466,7 @@
       <p class="muted">Built by <b>Jagruti Patel</b> · Pattern Recognition &amp; Anomaly Detection</p>
     </div>
     <div class="stack">
-      <span>Python</span><span>pandas</span><span>scikit-learn</span><span>DBSCAN</span><span>SVG · Canvas</span>
+      <span>Python</span><span>pandas</span><span>scikit-learn</span><span>DBSCAN</span><span>Flask API</span><span>SQLite</span><span>SVG · Canvas</span>
     </div>
     <a class="btn btn-ghost" href="https://github.com/jagupatel061/sentinel-ai-player-anomaly-detection" target="_blank" rel="noopener">Source on GitHub ↗</a>
   </footer>
@@ -290,6 +474,7 @@
   <div class="chart-tip" id="tip" role="tooltip"></div>
   <div class="loader" id="loader"><div class="loader-ring"></div><span class="mono">INITIALISING SENTINEL…</span></div>
 
+  <script src="config.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
