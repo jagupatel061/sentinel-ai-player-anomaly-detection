@@ -4,8 +4,9 @@ Sentinel AI — Synthetic Player Telemetry Generator
 Simulates in-game movement + aim telemetry for multiplayer matches.
 
 Player types:
-  - human      : natural movement, smooth-but-noisy aim, human reaction times
-  - aimbot     : instant "snap" aim flicks, near-zero jitter, inhuman accuracy
+  - human      : natural movement, noisy aim, human reaction times
+                 (each human has a skill level, so some "pro" players look suspicious)
+  - aimbot     : "snap" aim flicks and high accuracy; some are subtle "closet" cheaters
   - speedhack  : movement speed far above the game's max
   - triggerbot : normal movement, but fires with robotic, constant reaction time
 
@@ -38,8 +39,12 @@ def simulate_player(player_id, match_id, ptype):
     heading = RNG.uniform(0, 2 * np.pi)
     yaw, pitch = RNG.uniform(-180, 180), RNG.uniform(-10, 10)
 
-    speed_cap = MAX_HUMAN_SPEED * (RNG.uniform(1.8, 2.6) if ptype == "speedhack" else 1.0)
-    bot_reaction = RNG.uniform(40, 70)   # triggerbot: fixed, inhuman reaction (ms)
+    # --- per-player personality (makes the data realistic, not perfectly separable) ---
+    skill = RNG.beta(2, 5)               # 0 = casual, 1 = pro. A few humans are very good.
+    speed_cap = MAX_HUMAN_SPEED * (RNG.uniform(1.25, 2.4) if ptype == "speedhack" else 1.0)
+    bot_reaction = RNG.uniform(60, 110)  # triggerbot: fixed, inhuman reaction (ms)
+    lock = RNG.uniform(0.55, 1.0)        # aimbot strength: <0.7 = "closet" cheater (humanised)
+    human_rt = 290 - 110 * skill         # pros react faster
 
     for tick in range(TICKS_PER_PLAYER):
         # --- movement: random walk with momentum ---
@@ -53,11 +58,13 @@ def simulate_player(player_id, match_id, ptype):
         target_yaw = yaw + RNG.normal(0, 60) if enemy_visible else yaw
 
         if ptype == "aimbot" and enemy_visible:
-            new_yaw = target_yaw + RNG.normal(0, 0.3)          # instant lock-on
-            new_pitch = pitch + RNG.normal(0, 0.2)
+            # lock-on: snaps `lock` of the way to target, with tiny jitter
+            new_yaw = yaw + lock * (target_yaw - yaw) + RNG.normal(0, 3 * (1 - lock) + 0.3)
+            new_pitch = pitch + RNG.normal(0, 0.4)
         else:
-            # humans: partial correction toward target + hand jitter
-            new_yaw = yaw + 0.35 * (target_yaw - yaw) + RNG.normal(0, 2.5)
+            # humans: partial correction toward target + hand jitter (pros are steadier)
+            corr = 0.25 + 0.3 * skill
+            new_yaw = yaw + corr * (target_yaw - yaw) + RNG.normal(0, 2.8 - 1.2 * skill)
             new_pitch = pitch + RNG.normal(0, 1.2)
 
         yaw_delta = new_yaw - yaw
@@ -66,15 +73,18 @@ def simulate_player(player_id, match_id, ptype):
         # --- shooting ---
         is_firing = enemy_visible and RNG.random() < 0.8
         if ptype == "triggerbot":
-            reaction_ms = bot_reaction + RNG.normal(0, 3)
+            reaction_ms = bot_reaction + RNG.normal(0, 8)
         elif ptype == "aimbot":
-            reaction_ms = RNG.normal(90, 10)
+            reaction_ms = max(90, RNG.normal(human_rt - 80 * lock, 30))
         else:
-            reaction_ms = max(120, RNG.normal(250, 60))
+            reaction_ms = max(120, RNG.normal(human_rt, 55))
 
-        hit_prob = {"aimbot": 0.9, "triggerbot": 0.75}.get(ptype, 0.28)
-        is_hit = is_firing and RNG.random() < hit_prob
-        headshot = is_hit and RNG.random() < (0.7 if ptype == "aimbot" else 0.2)
+        base_hit = 0.22 + 0.33 * skill                     # humans: 22% .. 55%
+        hit_prob = {"aimbot": base_hit + 0.45 * lock,
+                    "triggerbot": base_hit + 0.2}.get(ptype, base_hit)
+        is_hit = is_firing and RNG.random() < min(hit_prob, 0.97)
+        hs_prob = 0.15 + 0.2 * skill + (0.45 * lock if ptype == "aimbot" else 0)
+        headshot = is_hit and RNG.random() < hs_prob
 
         rows.append({
             "match_id": match_id,
