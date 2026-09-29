@@ -308,7 +308,7 @@ python backend/app.py
 
 <div align="center">
 
-**Built by Jagruti Patel**
+**Built by Team Sentinel**
 Pattern Recognition & Anomaly Detection
 
 </div>
