@@ -1,10 +1,10 @@
 """
-Sentinel AI - Backend API + Database
+Spectator - Backend API + Database
 ====================================
 A Flask server that:
   * trains the DBSCAN model on the reference population (data/processed/player_features.csv)
   * exposes a REST API the website calls to scan a NEW player
-  * saves every scan to a SQLite database (backend/sentinel.db)
+  * saves every scan to a SQLite database (backend/Spectator.db)
   * serves the website itself (frontend/) so everything runs from one command
 
 Run from the repo root:
@@ -17,7 +17,7 @@ GET  /api/health            -> server status
 GET  /api/model             -> model parameters, feature ranges, demo presets
 POST /api/scan              -> JSON {gamertag, match_id, features{...}}   -> verdict (saved)
 POST /api/scan/upload       -> form-data gamertag, match_id, file(.csv)   -> verdict (saved)
-POST /api/challenge         -> "Beat Sentinel": simulate 20 matches with a user-designed cheat (saved)
+POST /api/challenge         -> "Beat Spectator": simulate 20 matches with a user-designed cheat (saved)
 GET  /api/leaderboard       -> Hall of Fame (undetected cheats) and Wall of Shame (caught)
 GET  /api/scans?limit=25    -> scan history from the database
 GET  /api/stats             -> totals per verdict
@@ -47,7 +47,7 @@ from pipeline import FEATURES, MIN_SAMPLES, MICRO_FRAC, choose_eps, extract_feat
 
 FEATURES_CSV = os.path.join(ROOT, "data", "processed", "player_features.csv")
 FRONTEND_DIR = os.path.join(ROOT, "frontend")
-DB_PATH = os.environ.get("SENTINEL_DB", os.path.join(BACKEND_DIR, "sentinel.db"))
+DB_PATH = os.environ.get("Spectator_DB", os.path.join(BACKEND_DIR, "Spectator.db"))
 
 LABELS = {
     "mean_speed": ("Mean speed", "units/tick"),
@@ -76,7 +76,7 @@ EXPLAIN = {
 
 
 # =====================================================================  model
-class SentinelModel:
+class SpectatorModel:
     """DBSCAN fitted on the reference population. New players are scored by their
     distance to the nearest core point of a NORMAL cluster, divided by eps."""
 
@@ -280,7 +280,7 @@ def row_to_dict(r):
 
 # =====================================================================  app
 app = Flask(__name__, static_folder=None)
-MODEL = SentinelModel(FEATURES_CSV)
+MODEL = SpectatorModel(FEATURES_CSV)
 init_db()
 
 TAG_RE = re.compile(r"^[A-Za-z0-9_.\- ]{2,24}$")
@@ -413,7 +413,7 @@ def stats():
 
 @app.route("/api/challenge", methods=["POST", "OPTIONS"])
 def challenge():
-    """Beat Sentinel: the user designs a cheat, we simulate 20 matches with it and try to catch it."""
+    """Beat Spectator: the user designs a cheat, we simulate 20 matches with it and try to catch it."""
     if request.method == "OPTIONS":
         return "", 204
     body = request.get_json(silent=True) or {}
@@ -465,5 +465,5 @@ def static_files(path):
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    print(f"\n  Sentinel AI backend running ->  http://localhost:{port}\n")
+    print(f"\n  Spectator backend running ->  http://localhost:{port}\n")
     app.run(host="0.0.0.0", port=port, debug=False)

@@ -1,10 +1,10 @@
 <div align="center">
 
-# 🛡️ Sentinel AI
+# 🛡️ Spectator
 
 ### Unsupervised cheat detection in multiplayer games using DBSCAN
 
-**[🌐 Live Demo → sentinel-ai-detection.onrender.com](https://sentinel-ai-detection.onrender.com)**
+**[🌐 Live Demo → Spectator-ai-detection.onrender.com](https://Spectator-ai-detection.onrender.com)**
 
 ![Python](https://img.shields.io/badge/Python-3.13-6ef3ff?style=for-the-badge&logo=python&logoColor=white&labelColor=0b0b16)
 ![scikit-learn](https://img.shields.io/badge/scikit--learn-DBSCAN-a07cff?style=for-the-badge&logo=scikitlearn&logoColor=white&labelColor=0b0b16)
@@ -23,7 +23,7 @@
 
 > Use **DBSCAN** to cluster in-game movement coordinate data and isolate potential **automated aiming or cheating behavior** in multiplayer games.
 
-Cheats such as aimbots, speedhacks and triggerbots leave behavioural traces that differ from how real humans move and aim. Sentinel AI learns what *normal* play looks like — **without ever being told who cheats** — and flags players whose behaviour falls outside dense regions of normal activity.
+Cheats such as aimbots, speedhacks and triggerbots leave behavioural traces that differ from how real humans move and aim. Spectator learns what *normal* play looks like — **without ever being told who cheats** — and flags players whose behaviour falls outside dense regions of normal activity.
 
 ---
 
@@ -31,7 +31,7 @@ Cheats such as aimbots, speedhacks and triggerbots leave behavioural traces that
 
 | Feature | What it does |
 |---|---|
-| ☠️ **Beat Sentinel** | Red-team game: **design your own cheat** (aim lock, smoothing, auto-trigger, speed boost). It is dropped into **20 simulated matches**, run through the full pipeline and DBSCAN, and either **CAUGHT** or **UNDETECTED** — with a replay, a detection rate and a **Hall of Fame / Wall of Shame** leaderboard stored in the database |
+| ☠️ **Beat Spectator** | Red-team game: **design your own cheat** (aim lock, smoothing, auto-trigger, speed boost). It is dropped into **20 simulated matches**, run through the full pipeline and DBSCAN, and either **CAUGHT** or **UNDETECTED** — with a replay, a detection rate and a **Hall of Fame / Wall of Shame** leaderboard stored in the database |
 | 🎬 **Match Replay Theatre** | Watch any of the 20 matches play back with all 10 players — play/pause, 1×/2×/4× speed, timeline scrubbing; flagged players glow |
 | 🔴 **Live Scanner** | Enter a gamertag, match ID and gameplay stats — or upload raw match telemetry — and the backend returns a verdict (Clean / Review / High / Critical) with the reasons |
 | 🗄️ **Scan database** | Every scan is stored in **SQLite** and shown in a live history table |
@@ -205,7 +205,7 @@ Every other method needs its **contamination** (the expected cheat rate) set in 
 ## 🔴 Live Scanner — Backend & Database
 
 ```
- Website  ──fetch/JSON──►  Flask REST API  ──SQL──►  SQLite (backend/sentinel.db)
+ Website  ──fetch/JSON──►  Flask REST API  ──SQL──►  SQLite (backend/Spectator.db)
                               │
                               └── DBSCAN model trained on data/processed/player_features.csv
 ```
@@ -219,12 +219,12 @@ A new player is scored exactly like the reference players: standardise the 10 fe
 | POST | `/api/scan` | Score a player from 10 feature values → saved |
 | POST | `/api/scan/upload` | Upload raw telemetry `.csv` → same feature extraction as the pipeline → saved |
 | GET | `/api/scans` | Scan history |
-| POST | `/api/challenge` | Beat Sentinel: simulate 20 matches with a user-designed cheat → detection rate, advantage, replay → saved |
+| POST | `/api/challenge` | Beat Spectator: simulate 20 matches with a user-designed cheat → detection rate, advantage, replay → saved |
 | GET | `/api/leaderboard` | Hall of Fame (undetected cheats) and Wall of Shame (caught) |
 | GET | `/api/stats` | Counts per verdict |
 | DELETE | `/api/scans` | Clear history |
 
-### ☠️ Beat Sentinel — what it shows
+### ☠️ Beat Spectator — what it shows
 
 | Cheat loadout | Detection rate | Advantage |
 |---|---|---|
@@ -232,7 +232,7 @@ A new player is scored exactly like the reference players: standardise the 10 fe
 | Rage aimbot | 100% | +118% |
 | Closet cheater (weak aim + smoothing) | ~20% | ~+14% |
 
-**Insight:** Sentinel catches every cheat strong enough to matter. The only cheats that slip through give a tiny advantage — DBSCAN forces cheaters to play almost like humans.
+**Insight:** Spectator catches every cheat strong enough to matter. The only cheats that slip through give a tiny advantage — DBSCAN forces cheaters to play almost like humans.
 
 ---
 
@@ -257,12 +257,12 @@ Density-based clustering can separate honest play from cheating **without any la
 ## 🗂️ Project Structure
 
 ```
-sentinel-ai-player-anomaly-detection/
+Spectator-ai-player-anomaly-detection/
 ├── backend/
 │   ├── generate_data.py      # synthetic telemetry generator
 │   ├── pipeline.py           # preprocessing → features → DBSCAN → scoring → evaluation → benchmark
 │   ├── app.py                # Flask REST API + SQLite database + serves the website
-│   ├── sentinel.db           # created automatically: every scan is stored here
+│   ├── Spectator.db           # created automatically: every scan is stored here
 │   └── requirements.txt
 ├── data/
 │   ├── raw/                  # player_telemetry.csv (60,000 rows)

@@ -1,5 +1,5 @@
 """
-Sentinel AI - Anomaly Detection Pipeline (DBSCAN)
+Spectator - Anomaly Detection Pipeline (DBSCAN)
 =================================================
 Stages (matches the project deliverables):
   1. Data preparation      -> load, clean, handle missing values

@@ -1,5 +1,5 @@
 /* =========================================================
-   SENTINEL AI — design system
+   Spectator — design system
    ========================================================= */
 :root {
   --bg: #06060c;
@@ -574,7 +574,7 @@ input[type=range]::-moz-range-thumb { width: 14px; height: 14px; border: 0; bord
 .lab-legend i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
 
 /* =========================================================
-   BEAT SENTINEL
+   BEAT Spectator
    ========================================================= */
 .nav-links a.nav-red { color: #ff8fb5; }
 .red-num { color: var(--pink); letter-spacing: .24em; }

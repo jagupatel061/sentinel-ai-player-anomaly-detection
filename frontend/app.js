@@ -1,5 +1,5 @@
 /* =========================================================
-   SENTINEL AI — front-end
+   Spectator — front-end
    Reads public/data/results.json (written by backend/pipeline.py)
    Every number on the page is computed from that file.
    ========================================================= */
@@ -654,7 +654,7 @@
   /* =========================================================
      LIVE SCANNER  (talks to the Flask backend + SQLite)
      ========================================================= */
-  const API = (window.SENTINEL_API || "").replace(/\/$/, "");
+  const API = (window.Spectator_API || "").replace(/\/$/, "");
   const TIER_META = {
     clean:    { label: "CLEAN",          color: C.green,  text: "Behaviour sits inside the dense core of honest players. No action needed." },
     review:   { label: "UNDER REVIEW",   color: C.amber,  text: "Just outside normal behaviour — could be a very skilled player. Sent to a human moderator." },
@@ -794,7 +794,7 @@
         out.innerHTML = `<div class="sr-idle"><div class="radar"><i></i><i></i><i></i><b></b></div><h3>Scan failed</h3><p class="muted">${esc(ex.message)}</p></div>`;
         if (!backendOnline) check();
       } finally {
-        btn.disabled = !backendOnline; $(".scan-btn-txt", btn).textContent = "Run Sentinel scan";
+        btn.disabled = !backendOnline; $(".scan-btn-txt", btn).textContent = "Run Spectator scan";
       }
     });
 
@@ -805,7 +805,7 @@
         "standardising with population μ / σ",
         `searching normal core points · ε = ${D.model.eps.toFixed(3)}`,
         "computing anomaly score = distance ÷ ε",
-        "INSERT INTO scans → sentinel.db",
+        "INSERT INTO scans → Spectator.db",
       ];
       out.innerHTML = `<div class="sr-scanning"><div class="radar"><i></i><i></i><i></i><b></b></div><div class="term">${lines.map((l, i) => `<div style="animation-delay:${i * 0.32}s" class="${i < lines.length ? "ok" : ""}">${l}</div>`).join("")}</div></div>`;
     }
@@ -826,7 +826,7 @@
             <div class="ring-txt"><b style="color:${col}">${r.score.toFixed(2)}</b><span>SCORE</span></div></div>
         </div>
         <p class="sr-text">${meta.text} ${clean ? `Score ${r.score.toFixed(2)} ≤ 1.0 means this player is within ε of an honest core player.` : `Score ${r.score.toFixed(2)} means the nearest honest core player is <b>${r.score.toFixed(1)}×</b> further away than DBSCAN's ε.`}</p>
-        <div><div class="mini-title">${clean ? "Largest deviations · all within normal play" : "Why Sentinel flagged this player"}</div>
+        <div><div class="mini-title">${clean ? "Largest deviations · all within normal play" : "Why Spectator flagged this player"}</div>
           ${r.reasons.map((x) => { const zc = Math.abs(x.z) > 2 ? col : C.cyan; return `<div class="reason"><b>${x.label}</b><span class="rz" style="color:${zc}">${x.z >= 0 ? "+" : ""}${x.z.toFixed(1)}σ</span>
             <div class="rbar"><div data-w="${Math.min(Math.abs(x.z) / 6, 1) * 100}%" style="background:${zc};box-shadow:0 0 8px ${zc}"></div></div>
             <p>${clean ? "" : "This player " + esc(x.text) + " · "}value <b>${fv(x.value)}</b> vs normal ${fv(x.normal)}</p></div>`; }).join("")}
@@ -994,7 +994,7 @@
   }
 
   /* =========================================================
-     BEAT SENTINEL — red-team challenge
+     BEAT Spectator — red-team challenge
      ========================================================= */
   function renderChallenge({ D }) {
     const form = $("#ch-form"), btn = $("#ch-btn"), out = $("#ch-result"), err = $("#ch-error"), tagIn = $("#ch-tag");
@@ -1031,7 +1031,7 @@
         $("#lb-stats").textContent = lb.attempts ? `${lb.attempts} cheats deployed · ${lb.caught} caught (${Math.round((lb.caught / lb.attempts) * 100)}%)` : "";
         const row = (r, fame) => `<li class="${r.id === myId ? "me" : ""}"><span><b>${esc(r.gamertag)}</b><small>${cheatSummary(r.params)}</small></span>
           <span class="v" style="color:${fame ? C.green : C.pink}">${fame ? r.evasion_score.toFixed(1) : Math.round(r.detection_rate * 100) + "%"}<small>${fame ? `+${r.power.toFixed(0)}% adv · ${Math.round(r.detection_rate * 100)}% det.` : `+${r.power.toFixed(0)}% adv`}</small></span></li>`;
-        $("#lb-fame").innerHTML = lb.hall_of_fame.length ? lb.hall_of_fame.map((r) => row(r, true)).join("") : `<li class="empty">No cheat has slipped past Sentinel yet.</li>`;
+        $("#lb-fame").innerHTML = lb.hall_of_fame.length ? lb.hall_of_fame.map((r) => row(r, true)).join("") : `<li class="empty">No cheat has slipped past Spectator yet.</li>`;
         $("#lb-shame").innerHTML = lb.wall_of_shame.length ? lb.wall_of_shame.map((r) => row(r, false)).join("") : `<li class="empty">Nobody caught yet — be the first.</li>`;
       }).catch(() => {
         $("#lb-fame").innerHTML = $("#lb-shame").innerHTML = `<li class="empty">Start the backend to see the leaderboard.</li>`;
@@ -1054,7 +1054,7 @@
       const cheat = { auto_trigger: trig.checked }; KEYS.forEach((k) => (cheat[k] = +$("#c-" + k).value));
       btn.disabled = true; $(".scan-btn-txt", btn).textContent = "Deploying…";
       out.innerHTML = `<div class="sr-scanning"><div class="trial-grid" id="tg">${Array.from({ length: 20 }, (_, i) => `<span>${i + 1}</span>`).join("")}</div>
-        <div class="term">${["simulating 20 matches · 300 ticks each", "extracting 10 behavioural features per match", "scoring each match against DBSCAN core", "INSERT INTO challenges → sentinel.db"].map((l, i) => `<div class="ok" style="animation-delay:${i * 0.5}s">${l}</div>`).join("")}</div></div>`;
+        <div class="term">${["simulating 20 matches · 300 ticks each", "extracting 10 behavioural features per match", "scoring each match against DBSCAN core", "INSERT INTO challenges → Spectator.db"].map((l, i) => `<div class="ok" style="animation-delay:${i * 0.5}s">${l}</div>`).join("")}</div></div>`;
       const cells = $$("#tg span");
       let k = 0; const spin = setInterval(() => { cells.forEach((c) => c.classList.remove("run")); cells[k % 20].classList.add("run"); k++; }, 70);
       try {
@@ -1073,9 +1073,9 @@
       const caught = r.verdict === "caught", honest = r.verdict === "honest";
       const col = honest ? C.cyan : caught ? C.pink : C.green;
       const title = honest ? "CLEAN" : caught ? "CAUGHT" : "UNDETECTED";
-      const line = honest ? "No cheat enabled — Sentinel saw an ordinary player. Turn something on and try to sneak past."
-        : caught ? `Sentinel flagged your cheat in <b>${r.caught} of ${r.trials}</b> matches. ${r.power > 40 ? "That much advantage is impossible to hide." : "Even a small edge leaves a fingerprint."}`
-        : `You slipped past in <b>${r.trials - r.caught} of ${r.trials}</b> matches — but your cheat only gave <b>+${r.power.toFixed(0)}%</b> advantage. ${r.power < 15 ? "Sentinel forces cheaters to play almost like humans." : "Nicely done — you're on the leaderboard."}`;
+      const line = honest ? "No cheat enabled — Spectator saw an ordinary player. Turn something on and try to sneak past."
+        : caught ? `Spectator flagged your cheat in <b>${r.caught} of ${r.trials}</b> matches. ${r.power > 40 ? "That much advantage is impossible to hide." : "Even a small edge leaves a fingerprint."}`
+        : `You slipped past in <b>${r.trials - r.caught} of ${r.trials}</b> matches — but your cheat only gave <b>+${r.power.toFixed(0)}%</b> advantage. ${r.power < 15 ? "Spectator forces cheaters to play almost like humans." : "Nicely done — you're on the leaderboard."}`;
       const rs = r.replay.reasons;
       out.innerHTML = `<div class="sr-done">
         <div class="sr-top"><div><span class="mono muted small">DEPLOYMENT #${r.id} · ${esc(r.gamertag)}</span>
@@ -1090,7 +1090,7 @@
           <div class="lm"><b style="color:${C.cyan}">${r.replay.score.toFixed(2)}</b><span>median score</span></div>
         </div>
         <div><div class="mini-title">Replay · median match <button class="replay-btn" type="button" id="ch-rp">↻ replay</button></div><canvas class="ch-replay" id="ch-canvas"></canvas></div>
-        <div><div class="mini-title">${caught ? "What gave you away" : "Sentinel's closest look"}</div>
+        <div><div class="mini-title">${caught ? "What gave you away" : "Spectator's closest look"}</div>
           ${rs.map((x) => { const zc = Math.abs(x.z) > 2 ? col : C.cyan; return `<div class="reason"><b>${x.label}</b><span class="rz" style="color:${zc}">${x.z >= 0 ? "+" : ""}${x.z.toFixed(1)}σ</span><div class="rbar"><div data-w="${Math.min(Math.abs(x.z) / 6, 1) * 100}%" style="background:${zc}"></div></div><p>value <b>${fv(x.value)}</b> vs honest median ${fv(x.normal)}</p></div>`; }).join("")}
         </div></div>`;
       requestAnimationFrame(() => requestAnimationFrame(() => $$(".rbar div", out).forEach((b) => (b.style.width = b.dataset.w))));

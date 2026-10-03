@@ -1,5 +1,5 @@
 """
-Sentinel AI — Synthetic Player Telemetry Generator
+Spectator — Synthetic Player Telemetry Generator
 ---------------------------------------------------
 Simulates in-game movement + aim telemetry for multiplayer matches.
 
