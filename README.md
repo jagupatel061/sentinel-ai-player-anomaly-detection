@@ -4,7 +4,7 @@
 
 ### Unsupervised cheat detection in multiplayer games using DBSCAN
 
-**[🌐 Live Demo → sentinel-ai-detection.vercel.app](https://sentinel-ai-detection.vercel.app)**
+**[🌐 Live Demo → sentinel-ai-detection.onrender.com](https://sentinel-ai-detection.onrender.com)**
 
 ![Python](https://img.shields.io/badge/Python-3.13-6ef3ff?style=for-the-badge&logo=python&logoColor=white&labelColor=0b0b16)
 ![scikit-learn](https://img.shields.io/badge/scikit--learn-DBSCAN-a07cff?style=for-the-badge&logo=scikitlearn&logoColor=white&labelColor=0b0b16)
@@ -308,7 +308,7 @@ python backend/app.py
 
 <div align="center">
 
-**Built by Team Sentinel**
+**Built by Team**
 Pattern Recognition & Anomaly Detection
 
 </div>
